@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Saved Posts</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: #111; color: #eee; }
+    main {
+      max-width: 1600px;
+      margin: 0 auto;
+      padding: 24px;
+      display: grid;
+      gap: 24px;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    }
+    .card {
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.4);
+      max-width: 450px;
+      width: 100%;
+      justify-self: center;
+    }
+    .header { display: flex; align-items: center; gap: 12px; padding: 14px 16px; }
+    .avatar { width: 42px; height: 42px; border-radius: 50%; background: linear-gradient(135deg,#f58529,#dd2a7b,#8134af,#515bd4); display: grid; place-items: center; color: #fff; font-weight: 700; }
+    .meta { display: grid; gap: 2px; }
+    .username { font-weight: 700; }
+    .time { font-size: 12px; color: #aaa; }
+    .media { position: relative; background: #000; }
+    .media-items { position: relative; }
+    .media-item { display: none; }
+    .media-item.active { display: block; }
+    .media video, .media img { display: block; width: 100%; height: auto; max-height: 480px; object-fit: cover; }
+    .media .nav {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      background: rgba(0,0,0,0.55);
+      border: none;
+      color: #fff;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      font-size: 16px;
+    }
+    .media .nav:hover { background: rgba(0,0,0,0.75); }
+    .media .prev { left: 8px; }
+    .media .next { right: 8px; }
+    .body { padding: 12px 16px 16px; display: grid; gap: 10px; }
+    .caption { white-space: pre-wrap; line-height: 1.5; }
+    .tags { color: #7cc4ff; font-size: 14px; }
+    .stats { font-size: 14px; color: #ccc; }
+    details.comments { border-top: 1px solid #2a2a2a; padding-top: 10px; }
+    details summary { cursor: pointer; list-style: none; font-weight: 600; }
+    details summary::-webkit-details-marker { display: none; }
+    .comment { margin: 8px 0; font-size: 14px; line-height: 1.4; }
+    .comment .owner { font-weight: 700; margin-right: 6px; }
+    .comment .likes { color: #aaa; font-size: 12px; margin-left: 6px; }
+    a { color: #74b9ff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+<main id="app"></main>
+
+<script>
+const app = document.getElementById('app');
+const DATA_FILE = 'data/1412/saved_posts.json.tmp';
+const MEDIA_BASE = 'data/1412/saved_media/';
+
+function timeAgo(dateStr) {
+  const d = new Date(dateStr);
+  if (isNaN(d)) return dateStr;
+  const diff = (Date.now() - d.getTime()) / 1000;
+  const units = [[60,'s'],[60,'m'],[24,'h'],[30,'d'],[12,'mo'],[Number.POSITIVE_INFINITY,'y']];
+  let val = diff, unit = 's';
+  for (const [step,label] of units) { if (val < step) { unit = label; break; } val /= step; }
+  return `${Math.floor(val)}${unit} ago`;
+}
+
+function render(posts) {
+  app.innerHTML = '';
+  posts.forEach(p => {
+    const card = document.createElement('article');
+    card.className = 'card';
+
+    const header = document.createElement('div');
+    header.className = 'header';
+    const avatar = document.createElement('div');
+    avatar.className = 'avatar';
+    avatar.textContent = p.owner_username?.slice(0,1)?.toUpperCase() || '?';
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.innerHTML = `<div class="username">${p.owner_username || 'unknown'}</div>
+                      <div class="time">${timeAgo(p.taken_at)}</div>`;
+    header.append(avatar, meta);
+
+    const media = document.createElement('div');
+    media.className = 'media';
+    const mediaItems = Array.isArray(p.media) ? p.media : [];
+    if (mediaItems.length) {
+      const itemsWrap = document.createElement('div');
+      itemsWrap.className = 'media-items';
+      const items = mediaItems.map((src, i) => {
+        const item = document.createElement('div');
+        item.className = 'media-item';
+        if (i === 0) item.classList.add('active');
+        const fullPath = MEDIA_BASE + src.path;
+        if (src.type === 'video') {
+          const v = document.createElement('video');
+          v.src = fullPath;
+          v.controls = true;
+          item.append(v);
+        } else {
+          const img = document.createElement('img');
+          img.src = fullPath;
+          item.append(img);
+        }
+        itemsWrap.append(item);
+        return item;
+      });
+      media.append(itemsWrap);
+      if (items.length > 1) {
+        let idx = 0;
+        const update = () => items.forEach((el, i) => el.classList.toggle('active', i === idx));
+        const prev = document.createElement('button');
+        prev.className = 'nav prev';
+        prev.textContent = '<';
+        prev.addEventListener('click', () => { idx = (idx - 1 + items.length) % items.length; update(); });
+        const next = document.createElement('button');
+        next.className = 'nav next';
+        next.textContent = '>';
+        next.addEventListener('click', () => { idx = (idx + 1) % items.length; update(); });
+        media.append(prev, next);
+      }
+    }
+
+    const body = document.createElement('div');
+    body.className = 'body';
+    const caption = document.createElement('div');
+    caption.className = 'caption';
+    caption.textContent = p.caption || '';
+    const tags = document.createElement('div');
+    tags.className = 'tags';
+    tags.textContent = (p.hashtags || []).map(t => `#${t}`).join(' ');
+    const stats = document.createElement('div');
+    stats.className = 'stats';
+    stats.textContent = `${p.likes} likes · ${(p.comments || []).length} comments`;
+    const link = document.createElement('a');
+    link.href = p.permalink;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = p.permalink;
+
+    const comments = document.createElement('details');
+    comments.className = 'comments';
+    const summary = document.createElement('summary');
+    summary.textContent = `View comments (${(p.comments || []).length})`;
+    comments.append(summary);
+    (p.comments || []).forEach(c => {
+      const row = document.createElement('div');
+      row.className = 'comment';
+      row.innerHTML = `<span class="owner">${c.owner}</span>${c.text}
+                       <span class="likes">♥ ${c.likes}</span>`;
+      comments.append(row);
+    });
+
+    body.append(caption, tags, stats, link, comments);
+    card.append(header, media, body);
+    app.append(card);
+  });
+}
+
+function tryParseJson(text) {
+  try { return JSON.parse(text); } catch {}
+  let t = text.trim();
+  if (t.endsWith(',')) t = t.slice(0, -1);
+  const start = t.indexOf('[');
+  if (start > -1) t = t.slice(start);
+  if (!t.startsWith('[')) t = '[' + t;
+  const lastBrace = t.lastIndexOf('}');
+  if (lastBrace > -1) t = t.slice(0, lastBrace + 1);
+  if (!t.trim().endsWith(']')) t = t + ']';
+  try { return JSON.parse(t); } catch (e) { console.warn('Repair failed:', e); }
+  return null;
+}
+
+fetch(DATA_FILE)
+  .then(r => r.text())
+  .then(t => {
+    const data = tryParseJson(t);
+    if (!data) throw new Error('Could not parse JSON (even after repair).');
+    render(data);
+  })
+  .catch(err => {
+    app.textContent = 'Failed to load posts: ' + err;
+    console.error(err);
+  });
+</script>
+</body>
+</html>
