@@ -1,0 +1,9 @@
+Modelado 3D en solo 3 minutos desde un Nokia 📱
+Creando un círculo, aplicando extrusión y escalado de vértices, y finalizando con una proyección cilíndrica para la textura.
+
+Whisk3D es un clon de Blender escrito completamente desde cero. Es software libre y el código está disponible en GitHub:
+https://github.com/Dante-Leoncini/Whisk3D
+
+Actualmente estoy trabajando en las versiones para Linux, Android y Windows, y busco donaciones para poder llegar a la primera versión estable.
+
+#fernet #fernetbranca #argentina #cordoba #b3d #blender #blendercommunity #3d #3dmodeling #3dmodel #software #symbian #nokia #retro #uv
