@@ -1,0 +1,7 @@
+How often do you run late because you can’t find your keys? 
+
+I do (more often than I’d like to admit) That frustration inspired this speculative design project.
+
+What if small and easily-to-lost objects could be more visible? Through animations and an AR experience, I explore how we might find them faster and avoid being late
+
+#speculativedesign #blender3d #blenderanimation #augumentedreality #animation #motiondesign

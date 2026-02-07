@@ -1,0 +1,9 @@
+Day 23 — turning Kode Dot into an air mouse 🖱️✨
+Move your hand to steer the cursor, tap to click. The IMU blends accelerometer + gyroscope for smooth rotation, with a touch of smoothing and a tiny dead-zone to kill jitter.
+Gestures: tap = left click, double tap = double click, long press = right click.
+Perfect for slides, couch browsing, or spinning 3D models. Still tuning, already fun.
+
+What should I add next? Tilt to scroll, a back-flick, or rotate for volume? Tell me below and see you on Day 24!
+-
+-
+#kode #makers #esp32 #diy #electronics
