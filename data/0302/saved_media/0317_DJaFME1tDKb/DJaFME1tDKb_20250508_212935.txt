@@ -1,0 +1,21 @@
+How to do this on your device: ( YOU RE WELCOME)
+
+First off, it needs a solid GPU for optimal results. If your device is not very high-performant, the project will run but at a lower fps.
+
+- Clone the open-source repo hacksider/Deep-Live-Cam . It is pretty easy to find, it got to #1 repository of the day
+- For Windows, follow the README instructions, it works perfectly fine
+- For Apple silicon (which is my device as well), I had trouble , therefore I used a smaller model called inswapper_128.onnx to make it run smoother. 
+
+Also when you do the run command, add --keep-fps in the command, like this: python run.py --keep-fps 
+In the end of the command do not forget the execution provider, according to the README file.
+
+Advice: Keep Many Faces , Fix Blueish Cam and Face Enhancer toggles OFF. They impact the performance if you do not have a high-performant GPU. 
+Song IB art_rafael on TikTok
+
+DISCLAIMER: This is for demo purposes. This video is not affiliates in any way with the real Megan Fox, Adriana Lima, Monica Belluci. Their faces are used purely as an example of this technology. 
+
+Written from the repo creators: This deepfake software is designed to be a productive tool for the AI-generated media industry. It can assist artists in animating custom characters, creating engaging content, and even using models for clothing design.
+
+We are aware of the potential for unethical applications and are committed to preventative measures. A built-in check prevents the program from processing inappropriate media (nudity, graphic content, sensitive material like war footage, etc.). We will continue to develop this project responsibly, adhering to the law and ethics. We may shut down the project or add watermarks if legally required.
+
+#engineer #engineering #programmer

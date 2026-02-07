@@ -1,0 +1,11 @@
+NYC creators Rebecca Xun and Lucia Camacho have built something strange, satirical, and thought-provoking: the Vape-o-Gotchi—a digital pet that only survives if you keep vaping.
+
+Debuted at an NYU Hackathon, the device started as an anti-vaping concept meant to guilt users into quitting. But halfway through, the duo flipped the idea on its head. Instead of discouraging nicotine use, the Vape-o-Gotchi rewards it—leaning fully into dark humor and the absurdity of gamifying addiction.
+
+Shaped like a Tamagotchi with a needy little pixel pet, the egg-shaped device is cobbled together with 3D-printed parts, exposed wires, and $80 worth of vape hardware. Despite its clunky look, it works—and it’s oddly charming in a twisted way.
+
+With Xun's background in software and Camacho’s hardware chops from working at defense tech company Anduril, they built a functioning prototype that highlights something deeper: how tech can blur the line between help and harm.
+
+They may still add a "good mode" to encourage less vaping—but for now, the Vape-o-Gotchi lives on puffs and pokes fun at our tech-obsessed culture.
+
+#VapeOGotchi #NYUHackathon #TechSatire #AddictionTech #DigitalPet  #DarkHumor #VapingDevice
