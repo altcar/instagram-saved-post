@@ -1,0 +1,9 @@
+🌟 Real-time Lighting in Virtual Production! 🌟
+
+Here’s what you’re looking at: a blue screen studio that is being dynamically lit in real time, completely synchronized with a virtual scene in Unreal Engine 5.4. 🎮💡
+
+Thanks to CyberGaffer, an Unreal Engine plugin and app, none of the 16 light sources in this studio had to be move after the initial 5-minute calibration. The lighting adjustments you see are synced to the virtual scene, all done instantly through a DMX network, and captured in-camera without any color grading. 🎥✨
+
+This footage has been filmed in the studio of one of our beta-testers @mrfactory_vp. Big thanks to Óscar M. Olarte and the team.
+
+💡 Want to learn more about this technology and stay updated? Check out the link in our bio to join our Discord!

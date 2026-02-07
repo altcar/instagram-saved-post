@@ -1,0 +1,10 @@
+UKSEDS Satellite Design Competition:
+
+On the 6th of July 2024, both of our teams Stella and Firewatch, who made it into the Top 5 final round of the UKSEDS Satellite Design Competition (SDC) based on their exceptional PDR and CDR scores, were invited down to the Airbus facility in Stevenage to give a presentation on their satellite journey and put them to the test, validating the Avionics and Structural integrity.
+
+WILDFIRES:
+This year the mission objective was focused on wildfires, and using Earth observation satellites to combat them. These advanced satellites provide crucial real-time data and imagery that can help detect and monitor wildfires with remarkable precision. They can identify hotspots and track the spread of fires, allowing for timely evacuation of at-risk populations and the allocation of firefighting resources. Furthermore, satellites equipped with infrared sensors can detect heat signatures, even in remote or densely forested areas, aiding in early detection efforts. In an era where climate change is contributing to more frequent and severe wildfires, the utilisation of Earth observation satellites is paramount to enhance our ability to predict, respond to, and mitigate the devastating consequences of these infernos, ultimately safeguarding both human lives and the natural world.
+
+Our journey through the UKSEDS SDC has been invaluable, offering our students the chance to engage with industry experts, receive constructive feedback, and gain hands-on experience in satellite design and engineering. This competition has been a cornerstone for the professional development of our students, helping them hone their skills and apply their knowledge in real-world scenarios.
+
+We are beyond proud of our teams' performances, placing Top 3 in the UK and receiving the ‘Best Innovative Award’! For a Satellite Design Competition, this is an immense achievement and it has filled the entire SunSat team with pride and motivation to aim even higher in the future.

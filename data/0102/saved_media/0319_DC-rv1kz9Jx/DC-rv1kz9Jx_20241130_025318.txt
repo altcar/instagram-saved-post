@@ -1,0 +1,5 @@
+現在可免費使用啊!
+NVIDIA 近期推出了 Edify，一個多模態架構，專門用於開發視覺生成 AI 模型，涵蓋了圖片、3D、360 度 HDRi、PBR 材質和影片等多種內容。
+如果需要影片中的Blender檔案與連結，在下方留言3D我就會私訊傳給你啦!
+
+#顯示卡 #輝達 #ai生成 #GameDev #AIinGames #3DModeling #ProceduralGeneration #Blender3D #UnrealEngine #Unity3D #GameAI #VirtualProduction #MachineLearningGames #3DAnimation #LevelDesign #AIGeneratedAssets #GamingTechnology #RealtimeRendering #AIArt #GameDevelopmentTips #3DEnvironmentDesign #GenerativeAI

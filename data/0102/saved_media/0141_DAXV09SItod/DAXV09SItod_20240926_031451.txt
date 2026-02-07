@@ -1,0 +1,5 @@
+去年在 GDC 大會上，Epic Games 公布了 Fab，這是一個新的內容市場平台，作為 Unreal Engine Marketplace、Sketchfab、ArtStation Marketplace 和 Quixel的新平台，旨在為各行業的數字創作者服務。這個新平台允許用戶搜尋、發布和分享各類資產，並將於今年 10 月中旬推出啊！
+
+作為這些改動的一部分，Quixel 團隊宣布，Megascans*將專屬於 Fab，並從平台上線至 2024 年年底對所有用戶免費開放，依照 Fab 的標準許可證使用。但從明年起，Epic Games 將不再免費提供 Quixel Megascans 資源庫了⋯ 
+
+#UE5 #自製遊戲 #獨立遊戲 #黑神話 #Blender動畫 #gamedevelopment  #線上教學 #遊戲線上教學 #UE5教學 #unrealengine5  #遊戲開發 #indiegame

@@ -1,0 +1,13 @@
+Taking you behind the scene today 🫡 
+
+I made an outfit generator so you can play dress-up with me in timesquare (full tutorial on yt)
+
+🤍 creating assets — full body shot, top down shot of clothes, remove background 
+
+🤍 specs & dimension — setting up the file, this is my first time designing at this scale 
+
+🤍 creating components — create instance property for each item, don’t forget to name your frame as “category/item name”
+
+🤍 storyboarding — writing out the story frame by frame, i’m collaborating with an animator (@_radnolan) for this project so 
+
+i’m so happy with how this turned out 🥺 let me know if you have any questions!
