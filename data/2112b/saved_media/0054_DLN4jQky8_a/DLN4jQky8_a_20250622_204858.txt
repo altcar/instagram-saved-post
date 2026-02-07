@@ -1,0 +1,11 @@
+✋🔠 i made a scrappy and yet fun font editor ✨
+pinch-rotate like a knob that switches modes:
+👌 index+thumb → pick the letter
+🤌 index+middle+thumb → warp its glyphs
+🖐️ all five → smooth the lines
+
+shoutout to @schultzschultzgrafik - the “pinch rotate switch modes” ui mechanism is inspired by their touchtype 👏
+
+also another experiment of using @touchdesigner ‘s new op family pops to manipulate lines/curves ✨
+
+#touchdesigner #touchdesignerlearning #touchdesignercommunity #newmediaart #creativecoding #handtracking #fontdesign #typefacedesign #uidesign
