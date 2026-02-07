@@ -1,0 +1,9 @@
+Part 1 | should i launch it?
+
+i have been experimenting with ai code editor for an actual startup idea i have and am in awe of how tools like cursor (recently windsurf) supercharges your creativity.
+
+also a good prompt makes significant difference in generation so i made a template for you (comment build to collect) !!
+
+you might ask, is it still necessary to learn how to code? the short answer is - yes. but don’t let the absence a cs degree or swe title hold you back. they don’t teach most of these stuff in school anyways ;)
+
+#ai #coding #app
