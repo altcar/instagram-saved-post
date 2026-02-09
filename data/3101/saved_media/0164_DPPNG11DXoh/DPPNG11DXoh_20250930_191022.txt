@@ -1,0 +1,25 @@
+Rate the transition from 1 to 10😎
+
+#hqprops #tattufpv #itsfpv #thobby 
+
+Supported by: @itsfpv @hqpropzhong @tattufpv @thobbyfpv 
+
+Frame: @itsfpv ERA 5 
+ESC: @voltararc Voltara 70A 
+FC: @kissultrafc Ultra V2 
+Motors: @thobbyfpv it's 2306.5 1750 
+VTX: @rushfpv_stphobby Tank Solo + Cherry
+Camera: @runcam Racer Nano 4
+Props: @hqpropzhong Ethix P2
+Lipo: @tattufpv 1050mah 6s V4 
+
+Radio: @radiomasterrc Boxer 
+Goggles: @divimathhdzero HDZero 
+Analog RX: @blacksheepfpv TBSFusion
+
+Stickcam: @djiglobal Action 5 Pro
+Actioncam: @djiglobal Action 2 
+
+Roll:     0.99    0.78    0
+Pitch:   0.99    0.78    0
+Yaw:     0.82    0.78    0
