@@ -137,5 +137,9 @@ python archive_db.py write-files --db data/1911/archive.db \
 python archive_db.py export-json --db data/1911/archive.db \
   --json data/1911/saved_posts.json --media data/1911/saved_media
 
+# recover records from per-folder meta.json after an interrupted resume
+python merge_meta.py --json data/1911/saved_posts.json \
+  --media data/1911/saved_media
+
 python archive_db.py stats --db data/1911/archive.db
 ```

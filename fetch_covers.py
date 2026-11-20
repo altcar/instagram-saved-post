@@ -55,7 +55,7 @@ def main() -> None:
     args = parser.parse_args()
 
     media_root = Path(args.media)
-    db = sqlite3.connect(args.db, timeout=60)
+    db = sqlite3.connect(args.db, timeout=60, check_same_thread=False)
     db.row_factory = sqlite3.Row
     folders: Dict[str, str] = {
         row["shortcode"]: row["folder"]
