@@ -15,3 +15,10 @@ data/3101/saved_media/0501_DTmIj0qDMMd/DTmIj0qDMMd_20260117_025927.mp4
 data/3101/saved_media/0546_DTitxCzkiFS/DTitxCzkiFS_20260115_190715.mp4
 data/3101/saved_media/0574_DTcoGvtEeMP/DTcoGvtEeMP_20260113_102159.mp4
 data/3101/saved_media/0633_DTaTDJOEhld/DTaTDJOEhld_20260112_124805.mp4
+
+# local indexes, caches and raw API pages
+__pycache__/
+*.pyc
+data/dedup.db
+data/*/.cache/
+data/*/raw/

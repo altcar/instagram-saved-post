@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Saved Archive</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+  <aside class="side">
+    <div class="brand">Saved<span>Archive</span></div>
+    <div class="stat"><b id="total">0</b><span>posts indexed</span></div>
+
+    <label class="search">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="search" type="search" placeholder="Search captions, people, notes…" autocomplete="off">
+    </label>
+
+    <div class="sideHead">Categories</div>
+    <div id="cats" class="catList"></div>
+
+    <div class="sideHead">Your tags <button id="clearTag" class="link hidden">clear</button></div>
+    <div id="tags" class="tagCloud"></div>
+
+    <div class="sideFoot">
+      <span id="videos">0</span> videos · <span id="shown">0</span> shown
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="top">
+      <div class="seg" id="views">
+        <button data-view="grid" class="on" title="Grid">▦</button>
+        <button data-view="list" title="List">☰</button>
+        <button data-view="post" title="Post">▤</button>
+      </div>
+      <select id="sort" title="Sort">
+        <option value="manual">Manual order</option>
+        <option value="newest">Newest first</option>
+        <option value="oldest">Oldest first</option>
+        <option value="likes">Most liked</option>
+        <option value="random">Shuffle</option>
+      </select>
+      <div class="count" id="count"></div>
+      <div class="hint" id="hint">Drag cards to reorder</div>
+    </header>
+
+    <div id="grid" class="grid"></div>
+    <div id="sentinel" class="sentinel"></div>
+    <div id="empty" class="empty hidden">No posts match this filter.</div>
+  </main>
+
+  <div id="scrim" class="scrim hidden"></div>
+  <aside id="drawer" class="drawer" aria-hidden="true">
+    <div class="drawerTop">
+      <a id="dPermalink" target="_blank" rel="noopener" class="link">Open on Instagram ↗</a>
+      <button id="closeDrawer" class="iconBtn" title="Close">✕</button>
+    </div>
+    <div id="drawerBody" class="drawerBody"></div>
+  </aside>
+</div>
+
+<template id="cardTpl">
+  <article class="card">
+    <div class="thumbWrap">
+      <img class="thumb" loading="lazy" decoding="async" alt="">
+      <span class="play"></span>
+      <span class="catChip"></span>
+      <span class="dragHandle" title="Drag to reorder">⋮⋮</span>
+    </div>
+    <div class="cardBody">
+      <div class="owner"></div>
+      <div class="caption"></div>
+      <div class="cardTags"></div>
+      <div class="cardFoot"><span class="likes"></span><span class="date"></span></div>
+    </div>
+  </article>
+</template>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
