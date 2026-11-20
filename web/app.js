@@ -209,6 +209,7 @@
         <span>${fmtDate(post.taken_at)}</span>
         <span>♥ ${fmtNum(post.likes)}</span>
         <span>${esc(post.typename || "")}</span>
+        ${post.category ? `<span>${esc(post.category)}${post.category_confidence ? " · " + Math.round(post.category_confidence * 100) + "%" : ""}</span>` : ""}
         ${post.location ? `<span>📍 ${esc(post.location)}</span>` : ""}
         <span>${post.media.length} file${post.media.length === 1 ? "" : "s"}</span>
       </div>

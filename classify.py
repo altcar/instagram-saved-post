@@ -136,6 +136,7 @@ def heuristic_category(caption: str, hashtags: List[str], owner: Optional[str],
         best, confidence = "ad", max(confidence, 0.8)
     # popular artist: art with unusually high engagement
     if best == "art" and likes >= 10000:
+        best = "artist"
         tags.append("popular-artist")
         confidence = max(confidence, 0.7)
     return best, confidence, tags
@@ -234,6 +235,7 @@ def stage_clip(conn: sqlite3.Connection, args: argparse.Namespace) -> None:
 
     prompts = [
         ("art", "a piece of artwork, painting, illustration, digital art, character design"),
+        ("artist", "artwork by a popular artist, gallery portfolio piece"),
         ("sexy", "a glamorous photo of an attractive woman in a bikini or stylish outfit"),
         ("erotic", "explicit erotic nudity or adult content"),
         ("ai-robotics", "a robot, robotic arm, humanoid robot, or AI robotics simulation"),
@@ -260,6 +262,7 @@ def stage_clip(conn: sqlite3.Connection, args: argparse.Namespace) -> None:
 
     archive = _archive(args)
     rows = rows_for(conn, "clip", args.limit)
+    id_to_row = {row["id"]: row for row in rows}
     print(f"clip: {len(rows)} posts")
     batch_size = args.batch
     from PIL import Image
@@ -291,6 +294,16 @@ def stage_clip(conn: sqlite3.Connection, args: argparse.Namespace) -> None:
             index = int(probs[i].argmax())
             category = prompts[index][0]
             confidence = float(probs[i][index])
+            row = id_to_row[post_id]
+            prev = row["category"]
+            prev_conf = row["category_confidence"] or 0
+            # Strong ad signals and confident text labels win over a weak CLIP guess.
+            if prev == "ad" and prev_conf >= 0.8:
+                continue
+            if confidence < 0.30 and prev and prev != "other":
+                continue
+            if category == "art" and (row["likes"] or 0) >= 10000:
+                category = "artist"
             conn.execute(
                 "UPDATE posts SET category=?, category_confidence=?, category_source=? WHERE id=?",
                 (category, confidence, "clip", post_id),

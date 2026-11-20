@@ -190,10 +190,15 @@ def upsert_post(
     }
     if row:
         post_id = row["id"]
-        assignments = ", ".join(f"{key} = ?" for key in payload)
+        update_payload = dict(payload)
+        # Re-importing a run must not wipe vision/CLIP categories or manual order.
+        if category is None:
+            update_payload.pop("category", None)
+        update_payload.pop("sort_order", None)
+        assignments = ", ".join(f"{key} = ?" for key in update_payload)
         conn.execute(
             f"UPDATE posts SET {assignments} WHERE id = ?",
-            (*payload.values(), post_id),
+            (*update_payload.values(), post_id),
         )
     else:
         columns = ", ".join(payload)
