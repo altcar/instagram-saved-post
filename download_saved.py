@@ -147,7 +147,19 @@ def iter_saved_posts(
         items = data.get("items") or []
         for item in items:
             media = item.get("media") or item
-            post = Post.from_iphone_struct(loader.context, media)
+            # Some saved items omit optional fields that Instaloader expects.
+            media.setdefault("has_liked", False)
+            media.setdefault("like_count", 0)
+            media.setdefault("comment_count", 0)
+            media.setdefault("caption", None)
+            try:
+                post = Post.from_iphone_struct(loader.context, media)
+            except KeyError as exc:
+                print(
+                    f"Skipping saved item with missing field {exc}",
+                    file=sys.stderr,
+                )
+                continue
             if post.mediaid in seen:
                 continue
             seen.add(post.mediaid)
@@ -201,6 +213,9 @@ def serialize_post(
 ) -> Dict[str, Any]:
     location = media.get("location") or {}
     location_name = location.get("name")
+    user = media.get("user") or {}
+    owner_username = user.get("username")
+    owner_id = user.get("pk") or user.get("id")
 
     comments: List[Dict[str, Any]] = []
     if with_comments:
@@ -220,8 +235,8 @@ def serialize_post(
         "permalink": f"https://www.instagram.com/p/{post.shortcode}/",
         "taken_at": post.date_utc.isoformat(),
         "caption": post.caption or "",
-        "owner_username": post.owner_username,
-        "owner_id": post.owner_id,
+        "owner_username": owner_username,
+        "owner_id": owner_id,
         "likes": post.likes,
         "is_video": post.is_video,
         "typename": post.typename,
@@ -280,9 +295,16 @@ def download_saved(
                     print(f"Failed to download {target}: {exc}", file=sys.stderr)
                     continue
 
-            record = serialize_post(
-                post, media, target_dir, output_dir, with_comments
-            )
+            try:
+                record = serialize_post(
+                    post, media, target_dir, output_dir, with_comments
+                )
+            except Exception as exc:
+                print(
+                    f"Failed to serialise {target_dir.name}: {exc}",
+                    file=sys.stderr,
+                )
+                continue
 
             if not first_record:
                 json_file.write(",\n")
