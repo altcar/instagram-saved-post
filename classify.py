@@ -148,6 +148,7 @@ def heuristic_category(caption: str, hashtags: List[str], owner: Optional[str],
 
 def connect(path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(path, timeout=60)
+    conn.execute("PRAGMA busy_timeout=60000")
     conn.row_factory = sqlite3.Row
     return conn
 
