@@ -126,13 +126,13 @@
     });
     ids.forEach((id) => {
       const item = state.items.find((x) => x.id === id);
-      if (item) { item.category = category; item.confidence = 1; }
-      const node = document.querySelector(`.card[data-id="${id}"]`);
-      if (node) {
-        const chip = node.querySelector(".catChip");
-        if (category) { chip.textContent = category + " 100%"; chip.classList.add("on"); }
-        else chip.classList.remove("on");
+      if (item) {
+        item.categories = [...new Set([...(item.categories || []), category])];
+        item.category = item.category || category;
+        item.confidence = 1;
       }
+      const node = document.querySelector(`.card[data-id="${id}"]`);
+      if (node && item) paintCategoryChip(node, item);
     });
     clearSelection();
     loadFacets();
@@ -224,10 +224,23 @@
     const img = node.querySelector(".thumb");
     if (img) img.hidden = false;
     const play = node.querySelector(".play");
-    if (play) play.style.display = "";
+    if (play) {
+      play.style.display = "";
+      play.classList.remove("playing");
+      play.title = "Play";
+    }
     // Return to the first media (the cover image), even if a carousel slide
     // or a video was showing when the card was clicked.
     updateMedia(node, node._item, 0);
+  }
+
+  function syncCardPlayButton(node, playing) {
+    const play = node.querySelector(".play");
+    if (!play) return;
+    play.classList.toggle("playing", !!playing);
+    play.style.display = "block";
+    play.title = playing ? "Restart video" : "Play video";
+    play.setAttribute("aria-label", playing ? "Restart video" : "Play video");
   }
 
   function playCardVideo(node) {
@@ -238,21 +251,43 @@
     if (!current || current.kind !== "video") return;
     const img = node.querySelector(".thumb");
     const vid = node.querySelector(".cardVideo");
+    const sameSource = vid.dataset.mediaUrl === current.url;
     img.hidden = true;
     vid.hidden = false;
-    if (vid.dataset.mediaUrl !== current.url) {
+    if (!sameSource) {
       vid.src = current.url;
       vid.dataset.mediaUrl = current.url;
     }
     vid.controls = true;
     vid.autoplay = true;
     vid.muted = true;
-    // Pressing play again restarts the clip from the beginning.
-    if (!vid.paused || vid.ended) {
+    // The button stays on top of the playing clip. Pressing it again restarts
+    // from 0:00 instead of doing nothing.
+    if (sameSource && (!vid.paused || vid.ended)) {
       try { vid.currentTime = 0; } catch (_) {}
     }
     vid.play().catch(() => {});
-    node.querySelector(".play").style.display = "none";
+    syncCardPlayButton(node, true);
+  }
+
+  function itemCategories(item) {
+    if (Array.isArray(item.categories) && item.categories.length) return item.categories;
+    return item.category ? [item.category] : [];
+  }
+
+  function paintCategoryChip(node, item) {
+    const chip = node.querySelector(".catChip");
+    if (!chip) return;
+    const cats = itemCategories(item);
+    if (!cats.length) {
+      chip.classList.remove("on");
+      chip.textContent = "";
+      return;
+    }
+    const pct = item.confidence ? ` ${Math.round(item.confidence * 100)}%` : "";
+    chip.textContent = cats.slice(0, 2).join(" · ")
+      + (cats.length > 2 ? ` +${cats.length - 2}` : "") + pct;
+    chip.classList.add("on");
   }
 
   function cardEl(item) {
@@ -265,9 +300,18 @@
     updateMedia(node, item, 0);
 
     const owner = node.querySelector(".ownerLink");
-    owner.textContent = item.owner ? "@" + item.owner : "post " + item.shortcode;
-    owner.href = item.owner_url || item.permalink;
-    owner.onclick = (e) => { e.stopPropagation(); if (item.owner) setOwner(item.owner); };
+    if (item.owner) {
+      owner.hidden = false;
+      owner.textContent = "@" + item.owner;
+      owner.href = item.owner_url || `https://www.instagram.com/${item.owner}/`;
+      owner.onclick = (e) => { e.stopPropagation(); setOwner(item.owner); };
+    } else {
+      // Do not use a shortcode or the word "post" as a fake handle.
+      owner.hidden = true;
+      owner.textContent = "";
+      owner.removeAttribute("href");
+      owner.onclick = null;
+    }
 
     const box = node.querySelector(".pickBox");
     box.checked = state.selected.has(item.id);
@@ -280,12 +324,7 @@
     node.querySelector(".likes").textContent = item.likes ? "♥ " + fmtNum(item.likes) : "";
     node.querySelector(".date").textContent = fmtDate(item.taken_at);
 
-    const chip = node.querySelector(".catChip");
-    if (item.category) {
-      const pct = item.confidence ? ` ${Math.round(item.confidence * 100)}%` : "";
-      chip.textContent = item.category + pct;
-      chip.classList.add("on");
-    }
+    paintCategoryChip(node, item);
 
     node.querySelector(".cardTags").innerHTML =
       (item.tags || []).slice(0, 3).map((t) => `<span>#${esc(t)}</span>`).join("");
@@ -293,6 +332,11 @@
     node.querySelector(".play").onclick = (e) => { e.stopPropagation(); playCardVideo(node); };
     node.querySelector(".prev").onclick = (e) => { e.stopPropagation(); changeMedia(node, -1); };
     node.querySelector(".next").onclick = (e) => { e.stopPropagation(); changeMedia(node, 1); };
+
+    const cardVideo = node.querySelector(".cardVideo");
+    cardVideo.addEventListener("play", () => syncCardPlayButton(node, true));
+    cardVideo.addEventListener("pause", () => syncCardPlayButton(node, false));
+    cardVideo.addEventListener("ended", () => syncCardPlayButton(node, false));
 
     const thumbWrap = node.querySelector(".thumbWrap");
     let touchX = null;
@@ -406,6 +450,7 @@
     }
   });
   grid.addEventListener("click", (e) => {
+    if (suppressClick) { suppressClick = false; return; }
     if (e.target === grid && !rectMoved) clearSelection();
   });
 
@@ -472,8 +517,11 @@
   function renderDrawer(post) {
     $("dPermalink").href = post.permalink;
     const tags = (post.tags || []).map((t) => `<span>#${esc(t)}</span>`).join("") || '<span class="hint">none</span>';
+    const postCats = Array.isArray(post.categories) && post.categories.length
+      ? post.categories
+      : (post.category ? [post.category] : []);
     const catOptions = ["", ...(window.__PRESETS || [...new Set([...state.customCats, "other"])])]
-      .map((c) => `<option value="${esc(c)}" ${post.category === c ? "selected" : ""}>${esc(c || "— uncategorised —")}</option>`)
+      .map((c) => `<option value="${esc(c)}">${esc(c || "— add category —")}</option>`)
       .join("");
 
     let media = "";
@@ -499,7 +547,7 @@
 
     const owner = post.owner
       ? `<a href="https://www.instagram.com/${esc(post.owner)}/" target="_blank" rel="noopener">@${esc(post.owner)}</a>`
-      : `<a href="${esc(post.permalink)}" target="_blank" rel="noopener">post ${esc(post.shortcode)}</a>`;
+      : '<span class="hint">creator unavailable</span>';
     const pct = post.category_confidence ? ` · ${Math.round(post.category_confidence * 100)}%` : "";
     const folderLink = post.folder
       ? `<a href="${esc(post.permalink)}" target="_blank" rel="noopener">${esc(post.shortcode)}</a>`
@@ -518,8 +566,11 @@
       </div>
       <div class="dCaption">${esc(post.caption)}</div>
 
-      <div class="dSection">Category <span id="savedCat" class="saved">saved</span></div>
-      <div class="dField"><select id="catSelect">${catOptions}</select></div>
+      <div class="dSection">Categories <span id="savedCat" class="saved">saved</span></div>
+      <div class="dTags" id="postCats">
+        ${postCats.map((c) => `<span>${esc(c)} <button class="catRemove" data-cat="${esc(c)}" title="Remove">×</button></span>`).join("") || '<span class="hint">none</span>'}
+      </div>
+      <div class="dField" style="margin-top:8px"><select id="catSelect">${catOptions}</select></div>
 
       <div class="dSection">Notes <span id="savedNotes" class="saved">saved</span></div>
       <div class="dField"><textarea id="notes" placeholder="Why did you save this? What to use it for…">${esc(post.notes)}</textarea></div>
@@ -530,9 +581,6 @@
         <input id="tagInput" placeholder="comma separated, e.g. lighting, tutorial, watch-later" value="${esc((post.tags || []).join(", "))}">
       </div>
 
-      <div class="dSection">Comments <button class="btn" id="loadComments">Load comments</button></div>
-      <div id="comments"><span class="hint">Loaded on demand to keep browsing light.</span></div>
-
       <div class="dSection">Details</div>
       <div class="dMeta">
         <span>${folderLink}</span>
@@ -541,6 +589,9 @@
         <button class="btn small" id="openFolder" title="Open in file manager">Open folder</button>
         ${post.vision_caption ? `<span>vision: ${esc(post.vision_caption)}</span>` : ""}
       </div>
+
+      <div class="dSection">Comments <button class="btn small" id="loadComments">Refresh</button></div>
+      <div id="comments"><span class="hint">Loading comments…</span></div>
     `;
 
     const gallery = $("gallery");
@@ -652,10 +703,37 @@
       };
     }
 
+    const paintPostCats = () => {
+      const wrap = $("postCats");
+      if (!wrap) return;
+      wrap.innerHTML = postCats.map((c) => `
+        <span>${esc(c)} <button class="catRemove" data-cat="${esc(c)}" title="Remove">×</button></span>
+      `).join("") || '<span class="hint">none</span>';
+      wrap.querySelectorAll(".catRemove").forEach((btn) => {
+        btn.onclick = async () => {
+          const cat = btn.dataset.cat;
+          const next = postCats.filter((c) => c !== cat);
+          postCats.splice(0, postCats.length, ...next);
+          await savePost(post.id, { categories: postCats });
+          flash("savedCat");
+          updateLocal(post.id, { categories: [...postCats], category: postCats[0] || null });
+          paintPostCats();
+          loadFacets();
+        };
+      });
+    };
+    paintPostCats();
+
     $("catSelect").onchange = async (e) => {
-      await savePost(post.id, { category: e.target.value });
+      const value = e.target.value;
+      if (!value) return;
+      if (!postCats.includes(value)) postCats.push(value);
+      await savePost(post.id, { categories: postCats });
       flash("savedCat");
-      updateLocal(post.id, { category: e.target.value });
+      updateLocal(post.id, { categories: [...postCats], category: postCats[0] || null });
+      paintPostCats();
+      e.target.value = "";
+      loadFacets();
     };
 
     $("notes").oninput = () => {
@@ -678,15 +756,24 @@
     $("tagInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); saveTags(); } });
     $("tagInput").addEventListener("blur", saveTags);
 
-    $("loadComments").onclick = async () => {
-      $("loadComments").disabled = true;
-      const full = await api(`/api/post/${post.id}?comments=1`);
-      const list = full.comments || [];
-      $("comments").innerHTML = list.length
-        ? list.map((c) => `<div class="comment"><b>@${esc(c.owner || "?")}</b>
-            <span class="when">${fmtDate(c.created_at)}</span><br>${esc(c.text || "")}</div>`).join("")
-        : '<span class="hint">No comments stored for this post.</span>';
+    const loadComments = async () => {
+      if ($("loadComments")) $("loadComments").disabled = true;
+      $("comments").innerHTML = '<span class="hint">Loading comments…</span>';
+      try {
+        const full = await api(`/api/post/${post.id}?comments=1`);
+        const list = full.comments || [];
+        $("comments").innerHTML = list.length
+          ? list.map((c) => `<div class="comment"><b>@${esc(c.owner || "?")}</b>
+              <span class="when">${fmtDate(c.created_at)}</span><br>${esc(c.text || "")}</div>`).join("")
+          : '<span class="hint">No comments stored for this post.</span>';
+      } catch (_) {
+        $("comments").innerHTML = '<span class="hint">Could not load comments.</span>';
+      } finally {
+        if ($("loadComments")) $("loadComments").disabled = false;
+      }
     };
+    $("loadComments").onclick = loadComments;
+    loadComments();
   }
 
   async function savePost(id, payload) {
@@ -710,12 +797,7 @@
     const node = document.querySelector(`.card[data-id="${id}"]`);
     if (!node) return;
     node.classList.toggle("notes", !!item.notes);
-    const chip = node.querySelector(".catChip");
-    if (item.category) {
-      const pct = item.confidence ? ` ${Math.round(item.confidence * 100)}%` : "";
-      chip.textContent = item.category + pct;
-      chip.classList.add("on");
-    } else chip.classList.remove("on");
+    paintCategoryChip(node, item);
     node.querySelector(".cardTags").innerHTML =
       (item.tags || []).slice(0, 3).map((t) => `<span>#${esc(t)}</span>`).join("");
   }

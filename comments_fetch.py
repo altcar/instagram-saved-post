@@ -85,6 +85,8 @@ def main() -> None:
     parser.add_argument("--missing", action="store_true")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--wait-ms", type=int, default=4000)
+    parser.add_argument("--max-comments", type=int, default=0,
+                        help="Stop after this many DOM comments (0 = current view)")
     parser.add_argument("--headful", action="store_true")
     args = parser.parse_args()
 
@@ -163,14 +165,26 @@ def main() -> None:
                         page.wait_for_timeout(1500)
                 except Exception:
                     pass
-                for _ in range(3):
+                comments: List[Dict[str, Any]] = []
+                seen_comments = set()
+                rounds = 3 if not args.max_comments else 20
+                for _ in range(rounds):
                     page.mouse.wheel(0, 2500)
-                    page.wait_for_timeout(400)
-                comments = page.evaluate(EXTRACT_JS)
+                    page.wait_for_timeout(450)
+                    for comment in page.evaluate(EXTRACT_JS):
+                        key = (comment.get("owner"), comment.get("text"))
+                        if key in seen_comments:
+                            continue
+                        seen_comments.add(key)
+                        comments.append(comment)
+                    if args.max_comments and len(comments) >= args.max_comments:
+                        break
                 owner = owners.get(code)
                 caption = captions.get(code) or ""
                 cleaned = []
                 for comment in comments:
+                    if args.max_comments and len(cleaned) >= args.max_comments:
+                        break
                     text = comment.get("text") or ""
                     if len(text) > 2000:
                         continue

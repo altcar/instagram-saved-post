@@ -91,6 +91,14 @@ CREATE TABLE IF NOT EXISTS post_tags (
     PRIMARY KEY (media_id, tag)
 );
 
+CREATE TABLE IF NOT EXISTS post_categories (
+    media_id TEXT NOT NULL,
+    category TEXT NOT NULL,
+    confidence REAL DEFAULT 1.0,
+    source TEXT DEFAULT 'manual',
+    PRIMARY KEY (media_id, category)
+);
+
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -108,6 +116,26 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def ensure_categories(conn: sqlite3.Connection) -> None:
+    """One-time migration from posts.category to the many-to-many table."""
+    row = conn.execute(
+        "SELECT value FROM meta WHERE key='categories_migrated'"
+    ).fetchone()
+    if row:
+        return
+    conn.execute(
+        "INSERT OR IGNORE INTO post_categories "
+        "(media_id, category, confidence, source) "
+        "SELECT media_id, category, COALESCE(category_confidence, 1.0), "
+        "COALESCE(category_source, 'legacy') FROM posts "
+        "WHERE category IS NOT NULL AND trim(category) <> ''"
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('categories_migrated','1')"
+    )
+    conn.commit()
+
+
 def connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path, timeout=60)
@@ -118,6 +146,7 @@ def connect(db_path: Path) -> sqlite3.Connection:
         conn.execute("ALTER TABLE posts ADD COLUMN comments_fetched_at TEXT")
     except sqlite3.OperationalError:
         pass
+    ensure_categories(conn)
     return conn
 
 
@@ -215,6 +244,12 @@ def upsert_post(
             tuple(payload.values()),
         )
         post_id = cur.lastrowid
+    if category:
+        conn.execute(
+            "INSERT OR IGNORE INTO post_categories "
+            "(media_id, category, confidence, source) VALUES (?,?,?,?)",
+            (media_key, category, 1.0, "import"),
+        )
     conn.execute("DELETE FROM post_media WHERE media_id = ?", (media_key,))
     if folder and media_root is not None:
         for item in list_media(media_root / folder):
