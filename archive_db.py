@@ -74,7 +74,8 @@ CREATE TABLE IF NOT EXISTS posts (
     source TEXT DEFAULT 'api',
     vision_caption TEXT,
     transcript TEXT,
-    ocr_text TEXT
+    ocr_text TEXT,
+    comments_fetched_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS post_media (
@@ -113,6 +114,10 @@ def connect(db_path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout=60000")
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    try:
+        conn.execute("ALTER TABLE posts ADD COLUMN comments_fetched_at TEXT")
+    except sqlite3.OperationalError:
+        pass
     return conn
 
 

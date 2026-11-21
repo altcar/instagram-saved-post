@@ -162,8 +162,8 @@ def connect(path: Path) -> sqlite3.Connection:
 def rows_for(conn: sqlite3.Connection, stage: str, limit: Optional[int],
              filter_mode: str = "all", redo: str = "none") -> List[sqlite3.Row]:
     where = {
-        "fast": "1=1",
-        "clip": "(category_source IS NULL OR category_source NOT LIKE '%clip%')",
+        "fast": "(category IS NULL OR category_source IS NULL)",
+        "clip": "(category IS NULL OR category_source = 'fast')",
         "caption": "vision_caption IS NULL",
         "ocr": "ocr_text IS NULL",
         "transcribe": "transcript IS NULL AND is_video = 1",

@@ -19,6 +19,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from datetime import datetime, timezone
+
 from playwright.sync_api import sync_playwright
 
 from chrome_cookies import playwright_cookies
@@ -98,19 +100,24 @@ def main() -> None:
             if row:
                 rows.append(row)
     if args.missing:
+        # Mark posts that already have comments (from old JSON migrations) as done.
+        for row in conn.execute(
+            "SELECT id, folder FROM posts WHERE folder IS NOT NULL"
+        ).fetchall():
+            cfile = Path(args.posts) / row["folder"] / "comments.json"
+            if cfile.is_file() and cfile.stat().st_size > 4:
+                conn.execute(
+                    "UPDATE posts SET comments_fetched_at=? WHERE id=?",
+                    (datetime.now(timezone.utc).isoformat(), row["id"]),
+                )
+        conn.commit()
         rows = conn.execute(
             "SELECT id, shortcode, folder, owner_username, caption FROM posts "
-            "WHERE folder IS NOT NULL ORDER BY sort_order"
+            "WHERE folder IS NOT NULL AND comments_fetched_at IS NULL "
+            "ORDER BY sort_order"
         ).fetchall()
     conn.close()
 
-    if args.missing:
-        filtered = []
-        for row in rows:
-            comments_file = Path(args.posts) / row["folder"] / "comments.json"
-            if not comments_file.is_file() or comments_file.stat().st_size <= 4:
-                filtered.append(row)
-        rows = filtered
     if args.limit:
         rows = rows[: args.limit]
     if not rows:
@@ -189,6 +196,16 @@ def main() -> None:
                         comments_text(merged), encoding="utf-8"
                     )
                     saved += 1
+                try:
+                    conn2 = sqlite3.connect(args.db, timeout=30)
+                    conn2.execute(
+                        "UPDATE posts SET comments_fetched_at=? WHERE id=?",
+                        (datetime.now(timezone.utc).isoformat(), row["id"]),
+                    )
+                    conn2.commit()
+                    conn2.close()
+                except Exception:
+                    pass
                 print(f"{index}/{len(rows)} {code}: {len(cleaned)} comments", flush=True)
             except Exception as exc:
                 print(f"{code}: {exc}", file=sys.stderr)

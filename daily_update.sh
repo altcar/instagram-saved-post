@@ -12,6 +12,8 @@ exec >>"$LOG" 2>&1
 # cron has no desktop session; make the GNOME keyring reachable for Chrome cookies
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
+export HF_HOME="/mnt/friendly/hf"
+export TRANSFORMERS_CACHE="/mnt/friendly/hf"
 
 echo "=== start $(date -Is) ==="
 
