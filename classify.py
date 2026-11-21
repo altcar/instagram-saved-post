@@ -29,6 +29,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -485,6 +486,56 @@ def stage_transcribe(conn: sqlite3.Connection, args: argparse.Namespace) -> None
     conn.commit()
 
 
+def stage_fuse(conn: sqlite3.Connection, args: argparse.Namespace) -> None:
+    """Fuse the four signals: author caption, OCR, vision caption, transcript."""
+    rows = conn.execute("SELECT * FROM posts ORDER BY sort_order").fetchall()
+    if args.limit:
+        rows = rows[: args.limit]
+    print(f"fuse: {len(rows)} posts")
+    for index, row in enumerate(rows, 1):
+        scores: Dict[str, float] = defaultdict(float)
+        clip_conf = row["category_confidence"] or 0.0
+        if row["category"] and row["category_source"] in ("clip", "fusion"):
+            scores[row["category"]] += 2.5 * max(0.25, clip_conf)
+
+        caption_cat, caption_conf, _ = heuristic_category(
+            row["caption"] or "",
+            json.loads(row["hashtags"] or "[]"),
+            row["owner_username"],
+            row["likes"] or 0,
+        )
+        if caption_cat != "other":
+            scores[caption_cat] += (
+                2.0 if caption_cat == "ad" and caption_conf >= 0.8 else 1.0
+            ) * caption_conf
+
+        for field, weight in (
+            ("vision_caption", 1.1),
+            ("ocr_text", 0.9),
+            ("transcript", 1.0),
+        ):
+            text = row[field]
+            if not text:
+                continue
+            cat, conf, _ = heuristic_category(str(text), [], None, 0)
+            if cat != "other":
+                scores[cat] += weight * conf
+
+        if not scores:
+            continue
+        best = max(scores, key=scores.get)
+        total = sum(scores.values())
+        confidence = min(0.95, scores[best] / max(1.0, total / 2))
+        conn.execute(
+            "UPDATE posts SET category=?, category_confidence=?, category_source=? WHERE id=?",
+            (best, confidence, "fusion", row["id"]),
+        )
+        if index % 500 == 0:
+            conn.commit()
+            print(f"  {index}/{len(rows)}", flush=True)
+    conn.commit()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Classify saved posts")
     parser.add_argument("--db", default="data/archive.db")
@@ -496,7 +547,7 @@ def main() -> None:
     parser.add_argument("--filter", default="all", choices=["all", "other", "lowconf"])
     parser.add_argument("--redo", default="none", choices=["none", "video"])
     sub = parser.add_subparsers(dest="stage", required=True)
-    for name in ("fast", "clip", "caption", "ocr", "transcribe"):
+    for name in ("fast", "clip", "caption", "ocr", "transcribe", "fuse"):
         p = sub.add_parser(name)
         p.add_argument("--db", default=argparse.SUPPRESS)
         p.add_argument("--media", default=argparse.SUPPRESS)
@@ -518,6 +569,8 @@ def main() -> None:
         stage_ocr(conn, args)
     elif args.stage == "transcribe":
         stage_transcribe(conn, args)
+    elif args.stage == "fuse":
+        stage_fuse(conn, args)
     conn.close()
 
 
