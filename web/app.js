@@ -42,16 +42,17 @@
     for (const c of f.categories) map.set(c.name, c.count);
     const adsCount = f.ads ?? map.get("ad") ?? 0;
     const cats = [
-      { name: "ad", count: adsCount },
+      { name: "", label: "All posts", count: f.total },
+      { name: "ad", label: "Ads (real Instagram ads)", count: adsCount },
       ...state.customCats
         .filter((name) => name !== "ad")
-        .map((name) => ({ name, count: map.get(name) || 0 })),
+        .map((name) => ({ name, label: name, count: map.get(name) || 0 })),
     ];
 
     $("cats").innerHTML = cats.map((c) => `
       <div class="cat ${state.category === c.name ? "on" : ""}" data-cat="${esc(c.name)}"
-           title="Click to filter · drop posts to categorise">
-        <span>${esc(c.name === "ad" ? "Ads (real Instagram ads)" : c.name)}</span>
+           title="${c.name ? "Click to filter · drop posts to categorise" : "Show every saved post"}">
+        <span>${esc(c.label)}</span>
         <b>${fmtNum(c.count)}</b>
       </div>`).join("");
     $("resetFilter").classList.toggle("hidden", !state.category);
@@ -64,7 +65,7 @@
         loadFacets();
       };
       el.addEventListener("dragover", (e) => {
-        if (el.dataset.cat === "all") return;
+        if (!el.dataset.cat) return;
         if (!dragIds && !state.selected.size) return;
         e.preventDefault();
         el.classList.add("over");
@@ -73,7 +74,7 @@
       el.addEventListener("drop", async (e) => {
         e.preventDefault();
         el.classList.remove("over");
-        if (el.dataset.cat === "all") return;
+        if (!el.dataset.cat) return;
         const ids = dragIds && dragIds.length ? dragIds : [...state.selected];
         if (ids.length) await assignCategory(el.dataset.cat, ids);
       });
@@ -189,6 +190,7 @@
     vid.hidden = true;
     vid.pause();
     vid.removeAttribute("src");
+    delete vid.dataset.mediaUrl;
     img.hidden = false;
     img.src = current.thumb;
     play.style.display = current.kind === "video" ? "block" : "none";
@@ -209,6 +211,25 @@
     updateMedia(node, item, ((node._mediaIndex || 0) + delta + media.length) % media.length);
   }
 
+  function resetCardMedia(node) {
+    if (!node || !node._item) return;
+    const vid = node.querySelector(".cardVideo");
+    if (vid) {
+      vid.pause();
+      vid.removeAttribute("src");
+      vid.load();
+      vid.hidden = true;
+      vid.controls = false;
+    }
+    const img = node.querySelector(".thumb");
+    if (img) img.hidden = false;
+    const play = node.querySelector(".play");
+    if (play) play.style.display = "";
+    // Return to the first media (the cover image), even if a carousel slide
+    // or a video was showing when the card was clicked.
+    updateMedia(node, node._item, 0);
+  }
+
   function playCardVideo(node) {
     const item = node._item;
     if (!item) return;
@@ -219,10 +240,17 @@
     const vid = node.querySelector(".cardVideo");
     img.hidden = true;
     vid.hidden = false;
-    vid.src = current.url;
+    if (vid.dataset.mediaUrl !== current.url) {
+      vid.src = current.url;
+      vid.dataset.mediaUrl = current.url;
+    }
     vid.controls = true;
     vid.autoplay = true;
     vid.muted = true;
+    // Pressing play again restarts the clip from the beginning.
+    if (!vid.paused || vid.ended) {
+      try { vid.currentTime = 0; } catch (_) {}
+    }
     vid.play().catch(() => {});
     node.querySelector(".play").style.display = "none";
   }
@@ -237,8 +265,8 @@
     updateMedia(node, item, 0);
 
     const owner = node.querySelector(".ownerLink");
-    owner.textContent = item.owner ? "@" + item.owner : "unknown";
-    owner.href = item.owner_url || (item.owner ? `https://www.instagram.com/${item.owner}/` : "#");
+    owner.textContent = item.owner ? "@" + item.owner : "post " + item.shortcode;
+    owner.href = item.owner_url || item.permalink;
     owner.onclick = (e) => { e.stopPropagation(); if (item.owner) setOwner(item.owner); };
 
     const box = node.querySelector(".pickBox");
@@ -279,8 +307,10 @@
     node.addEventListener("click", (e) => {
       if (suppressClick) { suppressClick = false; return; }
       if (e.target.closest(".ownerRow") || e.target.closest(".navBtn")
-          || e.target.closest(".play") || e.target.closest(".cardVideo")
-          || e.target.closest("input")) return;
+          || e.target.closest(".play") || e.target.closest("input")) return;
+      // Clicking anywhere else, including a playing video, opens the detail
+      // drawer and sends the card back to its cover image.
+      resetCardMedia(node);
       openPost(item.id);
     });
 
@@ -433,6 +463,7 @@
   }
 
   function closeDrawer() {
+    document.querySelectorAll("#gallery video").forEach((video) => video.pause());
     $("drawer").classList.remove("open");
     $("drawer").setAttribute("aria-hidden", "true");
     $("scrim").classList.add("hidden");
@@ -447,13 +478,16 @@
 
     let media = "";
     if (post.media.length) {
-      media = `<div class="dGallery" id="gallery">` + post.media.map((m, i) => {
+      media = `<div class="dGalleryWrap">
+        <div class="dGallery" id="gallery">` + post.media.map((m, i) => {
         if (m.kind === "video") {
-          return `<video class="gItem" data-i="${i}" controls playsinline preload="metadata"
-            poster="${post.cover}" src="${m.url}" muted ${i === 0 ? "autoplay" : ""}></video>`;
+          return `<video class="gItem" data-i="${i}" data-kind="video" controls playsinline
+            webkit-playsinline preload="metadata" poster="${post.cover}" src="${m.url}" muted></video>`;
         }
-        return `<img class="gItem" data-i="${i}" src="${m.url}" alt="">`;
-      }).join("") + `</div>`;
+        return `<img class="gItem" data-i="${i}" data-kind="image" src="${m.url}" alt="">`;
+      }).join("") + `</div>
+        <button class="gPlay hidden" id="gPlay" type="button" title="Play / restart video" aria-label="Play or restart video">▶</button>
+      </div>`;
       if (post.media.length > 1) {
         media += `<div class="gNav">
           <button class="btn" id="gPrev">‹</button>
@@ -465,7 +499,7 @@
 
     const owner = post.owner
       ? `<a href="https://www.instagram.com/${esc(post.owner)}/" target="_blank" rel="noopener">@${esc(post.owner)}</a>`
-      : "unknown";
+      : `<a href="${esc(post.permalink)}" target="_blank" rel="noopener">post ${esc(post.shortcode)}</a>`;
     const pct = post.category_confidence ? ` · ${Math.round(post.category_confidence * 100)}%` : "";
     const folderLink = post.folder
       ? `<a href="${esc(post.permalink)}" target="_blank" rel="noopener">${esc(post.shortcode)}</a>`
@@ -513,28 +547,96 @@
     if (gallery) {
       const items = [...gallery.querySelectorAll(".gItem")];
       const count = $("gCount");
+      const playBtn = $("gPlay");
+      let active = -1;
+
+      const playActiveVideo = () => {
+        const el = items[active];
+        if (!el || el.tagName !== "VIDEO") return;
+        el.muted = true;
+        el.autoplay = true;
+        el.playsInline = true;
+        const attempt = el.play();
+        if (attempt && attempt.catch) attempt.catch(() => {});
+      };
+
+      const updatePlayButton = () => {
+        if (!playBtn) return;
+        const el = items[active];
+        const isVideo = !!(el && el.tagName === "VIDEO");
+        playBtn.classList.toggle("hidden", !isVideo);
+        playBtn.textContent = el && !el.paused ? "↻" : "▶";
+        playBtn.title = el && !el.paused ? "Restart video" : "Play video";
+      };
+
       const setActive = () => {
-        const i = Math.min(items.length - 1,
-          Math.round(gallery.scrollLeft / Math.max(1, gallery.clientWidth)));
-        if (count) count.textContent = `${i + 1} / ${items.length}`;
+        const next = Math.max(0, Math.min(items.length - 1,
+          Math.round(gallery.scrollLeft / Math.max(1, gallery.clientWidth))));
+        const changed = next !== active;
+        active = next;
+        if (count) count.textContent = `${active + 1} / ${items.length}`;
         items.forEach((el, j) => {
           if (el.tagName === "VIDEO") {
-            if (j === i) el.play().catch(() => {});
-            else el.pause();
+            if (j === active) {
+              if (changed) {
+                try { el.currentTime = 0; } catch (_) {}
+              }
+              playActiveVideo();
+            } else {
+              el.pause();
+            }
           }
         });
+        updatePlayButton();
       };
+
       gallery.addEventListener("scroll", () => {
         clearTimeout(gallery.__t);
         gallery.__t = setTimeout(setActive, 120);
       });
-      if ($("gPrev")) $("gPrev").onclick = () =>
-        gallery.scrollBy({ left: -gallery.clientWidth, behavior: "smooth" });
-      if ($("gNext")) $("gNext").onclick = () =>
-        gallery.scrollBy({ left: gallery.clientWidth, behavior: "smooth" });
-      setActive();
-      const first = items[0];
-      if (first && first.tagName === "VIDEO") first.play().catch(() => {});
+
+      items.forEach((el) => {
+        el.addEventListener("click", () => {
+          if (el.tagName !== "VIDEO") return;
+          if (el.paused) el.play().catch(() => {});
+          else el.pause();
+          updatePlayButton();
+        });
+        if (el.tagName === "VIDEO") {
+          el.addEventListener("play", updatePlayButton);
+          el.addEventListener("pause", updatePlayButton);
+          el.addEventListener("ended", updatePlayButton);
+        }
+      });
+
+      if (playBtn) {
+        playBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const el = items[active];
+          if (!el || el.tagName !== "VIDEO") return;
+          // Every press starts the current clip again from the beginning.
+          try { el.currentTime = 0; } catch (_) {}
+          el.muted = true;
+          el.play().catch(() => {});
+          updatePlayButton();
+        });
+      }
+
+      const go = (delta) => {
+        const target = Math.max(0, Math.min(items.length - 1, active + delta));
+        gallery.scrollTo({ left: target * gallery.clientWidth, behavior: "smooth" });
+        clearTimeout(gallery.__t);
+        gallery.__t = setTimeout(setActive, 260);
+      };
+      if ($("gPrev")) $("gPrev").onclick = () => go(-1);
+      if ($("gNext")) $("gNext").onclick = () => go(1);
+
+      // Wait for the drawer to get its real width before deciding which slide
+      // is active and starting the first video.
+      requestAnimationFrame(() => {
+        setActive();
+        playActiveVideo();
+      });
     }
 
     if ($("openFolder")) {

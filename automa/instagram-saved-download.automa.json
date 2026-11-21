@@ -1,0 +1,542 @@
+{
+  "name": "Instagram Saved - download posts (Automa only)",
+  "icon": "riInstagramLine",
+  "table": [],
+  "version": "1.30.2",
+  "extVersion": "1.30.2",
+  "drawflow": {
+    "nodes": [
+      {
+        "type": "BlockBasic",
+        "dimensions": {
+          "width": 192,
+          "height": 72
+        },
+        "handleBounds": {
+          "source": [
+            {
+              "id": "trig001-output-1",
+              "position": "right",
+              "x": 196,
+              "y": 28,
+              "width": 16,
+              "height": 16
+            }
+          ],
+          "target": []
+        },
+        "computedPosition": {
+          "x": 80,
+          "y": 60,
+          "z": 0
+        },
+        "selected": false,
+        "dragging": false,
+        "resizing": false,
+        "initialized": true,
+        "data": {
+          "disableBlock": false,
+          "description": "Manual start",
+          "type": "manual",
+          "interval": 60,
+          "delay": 0,
+          "date": "",
+          "time": "00:00",
+          "url": "",
+          "shortcut": "",
+          "activeInInput": false,
+          "isUrlRegex": false,
+          "days": [],
+          "contextMenuName": "",
+          "contextTypes": [],
+          "parameters": [],
+          "preferParamsInTab": false,
+          "observeElement": {
+            "selector": "",
+            "baseSelector": "",
+            "matchPattern": "",
+            "targetOptions": {
+              "subtree": false,
+              "childList": true,
+              "attributes": false,
+              "attributeFilter": [],
+              "characterData": false
+            },
+            "baseElOptions": {
+              "subtree": false,
+              "childList": true,
+              "attributes": false,
+              "attributeFilter": [],
+              "characterData": false
+            }
+          }
+        },
+        "events": {},
+        "position": {
+          "x": 80,
+          "y": 60
+        },
+        "id": "trig001",
+        "label": "trigger"
+      },
+      {
+        "type": "BlockBasic",
+        "dimensions": {
+          "width": 192,
+          "height": 72
+        },
+        "handleBounds": {
+          "source": [
+            {
+              "id": "tab001-output-1",
+              "position": "right",
+              "x": 196,
+              "y": 28,
+              "width": 16,
+              "height": 16
+            }
+          ],
+          "target": [
+            {
+              "id": "tab001-input-1",
+              "position": "left",
+              "x": -20,
+              "y": 28,
+              "width": 16,
+              "height": 16
+            }
+          ]
+        },
+        "computedPosition": {
+          "x": 320,
+          "y": 60,
+          "z": 0
+        },
+        "selected": false,
+        "dragging": false,
+        "resizing": false,
+        "initialized": true,
+        "data": {
+          "disableBlock": false,
+          "description": "Open the Saved feed",
+          "url": "https://www.instagram.com/shalevfrfr/saved/all-posts/",
+          "userAgent": "",
+          "active": true,
+          "inGroup": false,
+          "waitTabLoaded": true,
+          "updatePrevTab": false,
+          "customUserAgent": false
+        },
+        "events": {},
+        "position": {
+          "x": 320,
+          "y": 60
+        },
+        "id": "tab001",
+        "label": "new-tab"
+      },
+      {
+        "type": "BlockBasic",
+        "dimensions": {
+          "width": 192,
+          "height": 72
+        },
+        "handleBounds": {
+          "source": [
+            {
+              "id": "js0001-output-1",
+              "position": "right",
+              "x": 196,
+              "y": 28,
+              "width": 16,
+              "height": 16
+            }
+          ],
+          "target": [
+            {
+              "id": "js0001-input-1",
+              "position": "left",
+              "x": -20,
+              "y": 28,
+              "width": 16,
+              "height": 16
+            }
+          ]
+        },
+        "computedPosition": {
+          "x": 560,
+          "y": 60,
+          "z": 0
+        },
+        "selected": false,
+        "dragging": false,
+        "resizing": false,
+        "initialized": true,
+        "data": {
+          "disableBlock": false,
+          "description": "Collect Saved posts and all media URLs",
+          "code": "(async () => {\n// Automa-only Instagram Saved collector.\n// Runs on instagram.com with your logged-in Chrome session. It pages through\n// the current Saved REST endpoint, expands ad carousels via media-info, and\n// exposes two variables:\n//   instagramSavedPosts -> one row per post (metadata)\n//   instagramMedia      -> one row per media file (downloaded by Save assets)\nconst USERNAME = 'shalevfrfr';\nconst ENRICH_ADS = true;\nconst MAX_POSTS = 0; // 0 = no limit; use e.g. 50 for a test run\nconst sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));\nconst headers = { 'x-ig-app-id': '936619743392459', 'x-requested-with': 'XMLHttpRequest' };\n\nfunction imageUrl(node) {\n  const candidates = (node && node.image_versions2 && node.image_versions2.candidates) || [];\n  return candidates.length ? candidates[0].url : (node && node.display_url) || null;\n}\nfunction videoUrl(node) {\n  const versions = (node && node.video_versions) || [];\n  if (!versions.length) return null;\n  versions.sort((a, b) => (b.width || 0) * (b.height || 0) - (a.width || 0) * (a.height || 0));\n  return versions[0].url;\n}\nfunction slidesOf(node) {\n  return Array.isArray(node.carousel_media) && node.carousel_media.length ? node.carousel_media : [node];\n}\nfunction stamp(seconds) {\n  const d = new Date((seconds || 0) * 1000);\n  const p = (n) => String(n).padStart(2, '0');\n  return d.getUTCFullYear() + p(d.getUTCMonth() + 1) + p(d.getUTCDate()) + '_' + p(d.getUTCHours()) + p(d.getUTCMinutes()) + p(d.getUTCSeconds());\n}\n\nconst posts = [];\nconst mediaRows = [];\nconst seen = new Set();\nlet nextMaxId = null;\nlet more = true;\n\nwhile (more) {\n  const url = new URL('https://www.instagram.com/api/v1/feed/saved/posts/');\n  if (nextMaxId) url.searchParams.set('max_id', nextMaxId);\n  const response = await fetch(url, { credentials: 'include', headers });\n  if (!response.ok) throw new Error('Saved feed returned HTTP ' + response.status);\n  const payload = await response.json();\n\n  for (const entry of payload.items || []) {\n    const savedMedia = entry.media || entry;\n    const savedId = String(savedMedia.pk || savedMedia.id || '');\n    if (!savedId || seen.has(savedId)) continue;\n    seen.add(savedId);\n\n    let node = savedMedia;\n    // Ads often expose only one creative in the Saved payload. The real\n    // carousel is still available from the media-info endpoint.\n    if (ENRICH_ADS && savedMedia.product_type === 'ad') {\n      try {\n        const infoResponse = await fetch(\n          'https://www.instagram.com/api/v1/media/' + savedId + '/info/',\n          { credentials: 'include', headers }\n        );\n        if (infoResponse.ok) {\n          const info = await infoResponse.json();\n          if (info.items && info.items[0]) node = info.items[0];\n        }\n      } catch (error) {\n        console.warn('ad info failed', savedId, error);\n      }\n    }\n\n    const shortcode = node.code || savedMedia.code || savedId;\n    const owner = (node.user && node.user.username) || (savedMedia.user && savedMedia.user.username) || '';\n    const caption = (node.caption && node.caption.text) || (savedMedia.caption && savedMedia.caption.text) || '';\n    const takenAt = node.taken_at || savedMedia.taken_at || null;\n    const mediaId = String(node.pk || savedMedia.pk || savedId);\n    const postStamp = stamp(takenAt);\n    const slides = slidesOf(node);\n\n    slides.forEach((slide, index) => {\n      const url = videoUrl(slide) || imageUrl(slide);\n      if (!url) return;\n      const kind = videoUrl(slide) ? 'video' : 'image';\n      const ext = kind === 'video' ? 'mp4' : 'jpg';\n      mediaRows.push({\n        media_id: mediaId,\n        shortcode: shortcode,\n        owner: owner,\n        index: index + 1,\n        kind: kind,\n        url: url,\n        filename: 'ig_' + mediaId + '_' + (index + 1) + '.' + ext,\n        folder: owner + '_' + shortcode,\n        caption: caption,\n        taken_at: takenAt,\n        permalink: 'https://www.instagram.com/p/' + shortcode + '/'\n      });\n    });\n\n    posts.push({\n      media_id: mediaId,\n      shortcode: shortcode,\n      owner: owner,\n      caption: caption,\n      taken_at: takenAt,\n      is_video: !!videoUrl(node),\n      product_type: node.product_type || savedMedia.product_type || '',\n      media_count: slides.length,\n      permalink: 'https://www.instagram.com/p/' + shortcode + '/'\n    });\n\n    if (MAX_POSTS && posts.length >= MAX_POSTS) { more = false; break; }\n    await sleep(25);\n  }\n\n  nextMaxId = payload.next_max_id || null;\n  more = more && !!payload.more_available && !!nextMaxId;\n  await sleep(250);\n}\n\nautomaSetVariable('instagramSavedPosts', posts);\nautomaSetVariable('instagramMedia', mediaRows);\nautomaNextBlock({ posts: posts.length, files: mediaRows.length });\n})().catch((error) => {\n  console.error(error);\n  automaNextBlock({ $error: true, message: String(error && error.message ? error.message : error) });\n});",
+          "everyNewTab": false,
+          "preloadScripts": [],
+          "runBeforeLoad": false,
+          "timeout": 600000,
+          "context": "website"
+        },
+        "events": {},
+        "position": {
+          "x": 560,
+          "y": 60
+        },
+        "id": "js0001",
+        "label": "javascript-code"
+      },
+      {
+        "type": "BlockBasic",
+        "dimensions": {
+          "width": 192,
+          "height": 72
+        },
+        "handleBounds": {
+          "source": [
+            {
+              "id": "loop01-output-1",
+              "position": "right",
+              "x": 196,
+              "y": 28,
+              "width": 16,
+              "height": 16
+            }
+          ],
+          "target": [
+            {
+              "id": "loop01-input-1",
+              "position": "left",
+              "x": -20,
+              "y": 28,
+              "width": 16,
+              "height": 16
+            }
+          ]
+        },
+        "computedPosition": {
+          "x": 800,
+          "y": 60,
+          "z": 0
+        },
+        "selected": false,
+        "dragging": false,
+        "resizing": false,
+        "initialized": true,
+        "data": {
+          "disableBlock": false,
+          "description": "One iteration per media file",
+          "loopId": "igfiles",
+          "loopThrough": "variable",
+          "variableName": "instagramMedia",
+          "referenceKey": "",
+          "elementSelector": "",
+          "waitForSelector": false,
+          "waitSelectorTimeout": 5000,
+          "maxLoop": "0",
+          "startIndex": "0",
+          "resumeLastWorkflow": false,
+          "reverseLoop": false,
+          "loopData": "[]",
+          "fromNumber": 1,
+          "toNumber": 10
+        },
+        "events": {},
+        "position": {
+          "x": 800,
+          "y": 60
+        },
+        "id": "loop01",
+        "label": "loop-data"
+      },
+      {
+        "type": "BlockBasic",
+        "dimensions": {
+          "width": 192,
+          "height": 72
+        },
+        "handleBounds": {
+          "source": [
+            {
+              "id": "save01-output-1",
+              "position": "right",
+              "x": 196,
+              "y": 28,
+              "width": 16,
+              "height": 16
+            }
+          ],
+          "target": [
+            {
+              "id": "save01-input-1",
+              "position": "left",
+              "x": -20,
+              "y": 28,
+              "width": 16,
+              "height": 16
+            }
+          ]
+        },
+        "computedPosition": {
+          "x": 1040,
+          "y": 60,
+          "z": 0
+        },
+        "selected": false,
+        "dragging": false,
+        "resizing": false,
+        "initialized": true,
+        "data": {
+          "disableBlock": false,
+          "description": "Download the current media file",
+          "type": "url",
+          "url": "{{loopData.igfiles.url}}",
+          "filename": "{{loopData.igfiles.filename}}",
+          "selector": "",
+          "markEl": false,
+          "multiple": false,
+          "onConflict": "overwrite",
+          "saveDownloadIds": false,
+          "assignVariable": false,
+          "variableName": "",
+          "saveData": false,
+          "dataColumn": ""
+        },
+        "events": {},
+        "position": {
+          "x": 1040,
+          "y": 60
+        },
+        "id": "save01",
+        "label": "save-assets"
+      },
+      {
+        "type": "BlockBasic",
+        "dimensions": {
+          "width": 192,
+          "height": 72
+        },
+        "handleBounds": {
+          "source": [
+            {
+              "id": "brk001-output-1",
+              "position": "right",
+              "x": 196,
+              "y": 28,
+              "width": 16,
+              "height": 16
+            }
+          ],
+          "target": [
+            {
+              "id": "brk001-input-1",
+              "position": "left",
+              "x": -20,
+              "y": 28,
+              "width": 16,
+              "height": 16
+            }
+          ]
+        },
+        "computedPosition": {
+          "x": 1280,
+          "y": 60,
+          "z": 0
+        },
+        "selected": false,
+        "dragging": false,
+        "resizing": false,
+        "initialized": true,
+        "data": {
+          "disableBlock": false,
+          "loopId": "igfiles",
+          "clearLoop": false
+        },
+        "events": {},
+        "position": {
+          "x": 1280,
+          "y": 60
+        },
+        "id": "brk001",
+        "label": "loop-breakpoint"
+      },
+      {
+        "type": "BlockBasic",
+        "dimensions": {
+          "width": 192,
+          "height": 72
+        },
+        "handleBounds": {
+          "source": [
+            {
+              "id": "exp001-output-1",
+              "position": "right",
+              "x": 196,
+              "y": 28,
+              "width": 16,
+              "height": 16
+            }
+          ],
+          "target": [
+            {
+              "id": "exp001-input-1",
+              "position": "left",
+              "x": -20,
+              "y": 28,
+              "width": 16,
+              "height": 16
+            }
+          ]
+        },
+        "computedPosition": {
+          "x": 1520,
+          "y": 60,
+          "z": 0
+        },
+        "selected": false,
+        "dragging": false,
+        "resizing": false,
+        "initialized": true,
+        "data": {
+          "disableBlock": false,
+          "description": "Save a JSON manifest next to the downloads",
+          "name": "instagram-saved-posts",
+          "refKey": "",
+          "type": "json",
+          "variableName": "instagramSavedPosts",
+          "addBOMHeader": false,
+          "onConflict": "overwrite",
+          "dataToExport": "variable",
+          "csvDelimiter": ","
+        },
+        "events": {},
+        "position": {
+          "x": 1520,
+          "y": 60
+        },
+        "id": "exp001",
+        "label": "export-data"
+      }
+    ],
+    "edges": [
+      {
+        "id": "edge-0",
+        "sourceHandle": "trig001-output-1",
+        "targetHandle": "tab001-input-1",
+        "source": "trig001",
+        "target": "tab001",
+        "class": "source-trig001-output-1 target-tab001-input-1",
+        "type": "default",
+        "z": 0,
+        "sourceX": 0,
+        "sourceY": 0,
+        "targetX": 0,
+        "targetY": 0,
+        "markerEnd": "arrowclosed",
+        "animated": false
+      },
+      {
+        "id": "edge-1",
+        "sourceHandle": "tab001-output-1",
+        "targetHandle": "js0001-input-1",
+        "source": "tab001",
+        "target": "js0001",
+        "class": "source-tab001-output-1 target-js0001-input-1",
+        "type": "default",
+        "z": 0,
+        "sourceX": 0,
+        "sourceY": 0,
+        "targetX": 0,
+        "targetY": 0,
+        "markerEnd": "arrowclosed",
+        "animated": false
+      },
+      {
+        "id": "edge-2",
+        "sourceHandle": "js0001-output-1",
+        "targetHandle": "loop01-input-1",
+        "source": "js0001",
+        "target": "loop01",
+        "class": "source-js0001-output-1 target-loop01-input-1",
+        "type": "default",
+        "z": 0,
+        "sourceX": 0,
+        "sourceY": 0,
+        "targetX": 0,
+        "targetY": 0,
+        "markerEnd": "arrowclosed",
+        "animated": false
+      },
+      {
+        "id": "edge-3",
+        "sourceHandle": "loop01-output-1",
+        "targetHandle": "save01-input-1",
+        "source": "loop01",
+        "target": "save01",
+        "class": "source-loop01-output-1 target-save01-input-1",
+        "type": "default",
+        "z": 0,
+        "sourceX": 0,
+        "sourceY": 0,
+        "targetX": 0,
+        "targetY": 0,
+        "markerEnd": "arrowclosed",
+        "animated": false
+      },
+      {
+        "id": "edge-4",
+        "sourceHandle": "save01-output-1",
+        "targetHandle": "brk001-input-1",
+        "source": "save01",
+        "target": "brk001",
+        "class": "source-save01-output-1 target-brk001-input-1",
+        "type": "default",
+        "z": 0,
+        "sourceX": 0,
+        "sourceY": 0,
+        "targetX": 0,
+        "targetY": 0,
+        "markerEnd": "arrowclosed",
+        "animated": false
+      },
+      {
+        "id": "edge-5",
+        "sourceHandle": "brk001-output-1",
+        "targetHandle": "exp001-input-1",
+        "source": "brk001",
+        "target": "exp001",
+        "class": "source-brk001-output-1 target-exp001-input-1",
+        "type": "default",
+        "z": 0,
+        "sourceX": 0,
+        "sourceY": 0,
+        "targetX": 0,
+        "targetY": 0,
+        "markerEnd": "arrowclosed",
+        "animated": false
+      }
+    ]
+  },
+  "settings": {
+    "publicId": "",
+    "aipowerToken": "",
+    "blockDelay": 0,
+    "saveLog": true,
+    "debugMode": false,
+    "restartTimes": 3,
+    "notification": true,
+    "execContext": "popup",
+    "reuseLastState": false,
+    "inputAutocomplete": true,
+    "onError": "stop-workflow",
+    "executedBlockOnWeb": false,
+    "insertDefaultColumn": false,
+    "defaultColumnName": "column"
+  },
+  "globalData": "{}",
+  "description": "Standalone Automa workflow. Collects Instagram Saved posts with the logged-in browser session, expands ad carousels through media-info, downloads every media URL through Chrome downloads, and exports a JSON manifest. Independent of the Python archive pipeline."
+}
