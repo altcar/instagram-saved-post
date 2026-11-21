@@ -22,3 +22,6 @@ __pycache__/
 data/dedup.db
 data/*/.cache/
 data/*/raw/
+data/large_originals/
+publish/site/
+publish/repos/
