@@ -1,5 +1,6 @@
 /* Static replacement for webapp.py's /api/* endpoints on GitHub Pages. */
 (() => {
+  window.__STATIC = true;
   const nativeFetch = window.fetch.bind(window);
   const ready = nativeFetch("manifest.json").then((r) => r.json());
   let db = null;

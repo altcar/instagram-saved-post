@@ -690,7 +690,9 @@
       });
     }
 
-    if ($("openFolder")) {
+    if ($("openFolder") && window.__STATIC) {
+      $("openFolder").hidden = true;
+    } else if ($("openFolder")) {
       $("openFolder").onclick = async () => {
         $("openFolder").textContent = "Opening…";
         try {

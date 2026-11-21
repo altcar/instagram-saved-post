@@ -117,10 +117,18 @@ def main() -> None:
         )
     rows = conn.execute("SELECT * FROM posts ORDER BY sort_order, id").fetchall()
 
+    saved_git = None
+    if (OUT / ".git").is_dir():
+        saved_git = OUT.parent / ".site-git"
+        if saved_git.exists():
+            shutil.rmtree(saved_git)
+        (OUT / ".git").rename(saved_git)
     if OUT.exists():
         shutil.rmtree(OUT)
     (OUT / "thumbs").mkdir(parents=True)
     (OUT / "comments").mkdir(parents=True)
+    if saved_git is not None:
+        saved_git.rename(OUT / ".git")
 
     posts = []
     cat_counts: dict[str, int] = {}
