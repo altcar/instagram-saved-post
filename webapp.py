@@ -74,7 +74,7 @@ class Archive:
 
     # ---------------- listing ----------------
     def list_posts(self, *, offset: int, limit: int, q: str, category: str,
-                   tag: str, sort: str) -> Tuple[List[Dict[str, Any]], int]:
+                   tag: str, sort: str, owner: str = "") -> Tuple[List[Dict[str, Any]], int]:
         where: List[str] = []
         params: List[Any] = []
         if q:
@@ -93,6 +93,9 @@ class Archive:
                 "EXISTS (SELECT 1 FROM post_tags t WHERE t.media_id=p.media_id AND t.tag = ?)"
             )
             params.append(tag)
+        if owner:
+            where.append("p.owner_username = ?")
+            params.append(owner)
         clause = ("WHERE " + " AND ".join(where)) if where else ""
 
         order = {
@@ -119,27 +122,47 @@ class Archive:
                     LIMIT ? OFFSET ?""",
                 [*params, limit, offset],
             ).fetchall()
-        finally:
+        except Exception:
             conn.close()
+            raise
 
         items = []
         for row in rows:
+            media_rows = conn.execute(
+                "SELECT path, kind FROM post_media WHERE media_id=? ORDER BY path",
+                (row["media_id"],),
+            ).fetchall()
+            media = [
+                {
+                    "i": index,
+                    "kind": media_row["kind"],
+                    "thumb": f"/api/thumb/{row['id']}?i={index}",
+                    "url": f"/api/media/{row['id']}/{index}",
+                }
+                for index, media_row in enumerate(media_rows)
+            ]
             items.append(
                 {
                     "id": row["id"],
                     "shortcode": row["shortcode"],
                     "owner": row["owner_username"],
+                    "owner_url": f"https://www.instagram.com/{row['owner_username']}/" if row["owner_username"] else None,
+                    "permalink": f"https://www.instagram.com/p/{row['shortcode']}/",
                     "caption": (row["caption"] or "")[:280],
                     "likes": row["likes"],
                     "taken_at": row["taken_at"],
                     "is_video": bool(row["is_video"]),
                     "category": row["category"],
+                    "confidence": row["category_confidence"],
+                    "source": row["category_source"],
                     "tags": (row["tag_list"] or "").split("|") if row["tag_list"] else [],
                     "notes": row["notes"] or "",
                     "media_count": row["media_count"] or 0,
+                    "media": media,
                     "thumb": f"/api/thumb/{row['id']}",
                 }
             )
+        conn.close()
         return items, total
 
     def facets(self) -> Dict[str, Any]:
@@ -263,6 +286,21 @@ class Archive:
         finally:
             conn.close()
 
+    def bulk_category(self, ids: List[int], category: str) -> int:
+        if not ids:
+            return 0
+        conn = self.connect()
+        try:
+            conn.executemany(
+                "UPDATE posts SET category=?, category_source='manual', "
+                "category_confidence=1.0 WHERE id=?",
+                [(category, post_id) for post_id in ids],
+            )
+            conn.commit()
+            return len(ids)
+        finally:
+            conn.close()
+
     def reorder(self, post_id: int, before_id: Optional[int], after_id: Optional[int]) -> bool:
         conn = self.connect()
         try:
@@ -317,27 +355,29 @@ class Archive:
                 return candidate
         return None
 
-    def thumbnail(self, post_id: int, width: int = 360) -> Optional[Path]:
-        cache = self.thumb_dir / f"{post_id}_{width}.jpg"
+    def thumbnail(self, post_id: int, width: int = 360, index: int = 0) -> Optional[Path]:
+        cache = self.thumb_dir / f"{post_id}_{index}_{width}.jpg"
         if cache.is_file() and cache.stat().st_size > 0:
             return cache
-        with lock_for(f"{post_id}_{width}"):
+        with lock_for(f"{post_id}_{index}_{width}"):
             if cache.is_file() and cache.stat().st_size > 0:
                 return cache
-            source = self._cover_path(post_id)
+            media = self._media_paths(post_id)
+            source: Optional[Path] = None
+            kind = None
+            rel = None
+            if 0 <= index < len(media):
+                rel, kind = media[index]
+            if index == 0:
+                source = self._cover_path(post_id)
+            if source is None and rel is not None:
+                candidate = self.media_root / rel
+                if kind == "image":
+                    source = candidate
+                elif kind == "video":
+                    source = self._video_frame(candidate)
             if source is None:
-                media = self._media_paths(post_id)
-                image = next(
-                    (self.media_root / p for p, k in media if k == "image"),
-                    None,
-                )
-                video = next(
-                    (self.media_root / p for p, k in media if k == "video"),
-                    None,
-                )
-                source = image
-                if source is None and video is not None:
-                    source = self._video_frame(video)
+                source = self._cover_path(post_id)
             try:
                 if source is None:
                     self._placeholder(cache, width)
@@ -357,18 +397,40 @@ class Archive:
                 self._placeholder(cache, width)
             return cache if cache.is_file() else None
 
+    def _video_duration(self, video: Path) -> Optional[float]:
+        if imageio_ffmpeg is None:
+            return None
+        try:
+            proc = subprocess.run(
+                [imageio_ffmpeg.get_ffmpeg_exe(), "-hide_banner", "-i", str(video)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=60,
+            )
+        except Exception:
+            return None
+        match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", proc.stderr)
+        if not match:
+            return None
+        hours, minutes, seconds = match.groups()
+        return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+
     def _video_frame(self, video: Path) -> Optional[Path]:
         if imageio_ffmpeg is None:
             return None
         target = self.cache_dir / f"frame_{abs(hash(str(video)))}.jpg"
-        if target.is_file():
+        if target.is_file() and target.stat().st_size > 0:
             return target
+        duration = self._video_duration(video)
+        midpoint = duration / 2 if duration else 1.0
         ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
         try:
             subprocess.run(
                 [
-                    ffmpeg, "-y", "-loglevel", "error", "-ss", "1",
-                    "-i", str(video), "-frames:v", "1", "-vf", "scale=480:-1",
+                    ffmpeg, "-y", "-loglevel", "error",
+                    "-ss", f"{midpoint:.3f}", "-i", str(video),
+                    "-frames:v", "1", "-vf", "scale=480:-1",
                     str(target),
                 ],
                 check=False,
@@ -480,6 +542,7 @@ class Handler(BaseHTTPRequestHandler):
                 category=query.get("category", ["all"])[0],
                 tag=query.get("tag", [""])[0],
                 sort=query.get("sort", ["manual"])[0],
+                owner=query.get("owner", [""])[0],
             )
             self._json(200, {"items": items, "total": total, "offset": offset})
             return
@@ -500,7 +563,8 @@ class Handler(BaseHTTPRequestHandler):
         match = re.match(r"^/api/thumb/(\d+)$", path)
         if match:
             width = int(query.get("w", ["360"])[0])
-            thumb = self.archive.thumbnail(int(match.group(1)), width)
+            index = int(query.get("i", ["0"])[0])
+            thumb = self.archive.thumbnail(int(match.group(1)), width, index)
             if thumb:
                 self._file(thumb, "image/jpeg")
             else:
@@ -540,6 +604,14 @@ class Handler(BaseHTTPRequestHandler):
         if match:
             ok = self.archive.update_post(int(match.group(1)), payload)
             self._json(200 if ok else 404, {"ok": ok})
+            return
+
+        if parsed.path == "/api/bulk_category":
+            ok = self.archive.bulk_category(
+                [int(value) for value in payload.get("ids", [])],
+                str(payload.get("category") or ""),
+            )
+            self._json(200, {"ok": bool(ok), "count": ok})
             return
 
         if parsed.path == "/api/reorder":

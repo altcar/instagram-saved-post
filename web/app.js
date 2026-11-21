@@ -3,12 +3,15 @@
 
   const $ = (id) => document.getElementById(id);
   const state = {
-    q: "", category: "all", tag: "", sort: "manual", view: "grid",
+    q: "", category: "all", tag: "", owner: "", sort: "manual", view: "grid",
     offset: 0, limit: 60, total: 0, items: [], loading: false, done: false,
+    selected: new Set(), selectMode: false,
+    customCats: JSON.parse(localStorage.getItem("ig_custom_cats") || "[]"),
   };
-  let dragId = null;
+  let dragIds = null;
   let saveTimer = null;
   let searchTimer = null;
+  let rectStart = null;
 
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -26,19 +29,49 @@
     return res.json();
   }
 
-  /* ---------------- facets ---------------- */
+  /* ---------------- facets / categories ---------------- */
   async function loadFacets() {
     const f = await api("/api/facets");
     $("total").textContent = f.total.toLocaleString();
     $("videos").textContent = f.videos.toLocaleString();
+    window.__PRESETS = f.presets || [];
 
-    const cats = [{ name: "all", count: f.total }, ...f.categories];
+    const map = new Map();
+    for (const c of f.categories) map.set(c.name, c.count);
+    for (const c of state.customCats) if (!map.has(c)) map.set(c, 0);
+    const cats = [{ name: "all", count: f.total }, ...[...map.entries()]
+      .filter(([name]) => name !== "all")
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, count]) => ({ name, count }))];
+
     $("cats").innerHTML = cats.map((c) => `
-      <div class="cat ${state.category === c.name ? "on" : ""}" data-cat="${esc(c.name)}">
-        <span>${esc(c.name === "all" ? "All posts" : c.name)}</span><b>${fmtNum(c.count)}</b>
+      <div class="cat ${state.category === c.name ? "on" : ""}" data-cat="${esc(c.name)}"
+           title="Click to filter · drop posts to categorise">
+        <span>${esc(c.name === "all" ? "All posts" : c.name)}</span>
+        <b>${fmtNum(c.count)}</b>
       </div>`).join("");
+
     $("cats").querySelectorAll(".cat").forEach((el) => {
-      el.onclick = () => { state.category = el.dataset.cat; state.tag = ""; reset(); loadFacets(); };
+      el.onclick = () => {
+        state.category = el.dataset.cat;
+        state.tag = "";
+        reset();
+        loadFacets();
+      };
+      el.addEventListener("dragover", (e) => {
+        if (el.dataset.cat === "all") return;
+        if (!dragIds && !state.selected.size) return;
+        e.preventDefault();
+        el.classList.add("over");
+      });
+      el.addEventListener("dragleave", () => el.classList.remove("over"));
+      el.addEventListener("drop", async (e) => {
+        e.preventDefault();
+        el.classList.remove("over");
+        if (el.dataset.cat === "all") return;
+        const ids = dragIds && dragIds.length ? dragIds : [...state.selected];
+        if (ids.length) await assignCategory(el.dataset.cat, ids);
+      });
     });
 
     $("tags").innerHTML = f.tags.map((t) => `
@@ -47,10 +80,55 @@
     $("tags").querySelectorAll(".tag").forEach((el) => {
       el.onclick = () => {
         state.tag = state.tag === el.dataset.tag ? "" : el.dataset.tag;
-        reset(); loadFacets();
+        reset();
+        loadFacets();
       };
     });
     $("clearTag").classList.toggle("hidden", !state.tag);
+    $("clearSel").classList.toggle("hidden", !state.selected.size);
+  }
+
+  $("addCat").onclick = () => {
+    const name = prompt("New category name");
+    if (!name) return;
+    const clean = name.trim().toLowerCase();
+    if (!clean) return;
+    if (!state.customCats.includes(clean)) state.customCats.push(clean);
+    localStorage.setItem("ig_custom_cats", JSON.stringify(state.customCats));
+    loadFacets();
+  };
+
+  function setOwner(owner) {
+    state.owner = owner || "";
+    state.q = "";
+    $("search").value = "";
+    $("ownerFilter").classList.toggle("hidden", !owner);
+    if (owner) {
+      $("ownerName").textContent = "@" + owner;
+      $("ownerName").href = "https://www.instagram.com/" + owner + "/";
+    }
+    reset();
+  }
+  $("clearOwner").onclick = () => setOwner("");
+
+  async function assignCategory(category, ids) {
+    if (!ids.length) return;
+    await api("/api/bulk_category", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids, category }),
+    });
+    ids.forEach((id) => {
+      const item = state.items.find((x) => x.id === id);
+      if (item) { item.category = category; item.confidence = 1; }
+      const node = document.querySelector(`.card[data-id="${id}"]`);
+      if (node) {
+        const chip = node.querySelector(".catChip");
+        if (category) { chip.textContent = category + " 100%"; chip.classList.add("on"); }
+        else chip.classList.remove("on");
+      }
+    });
+    clearSelection();
+    loadFacets();
   }
 
   /* ---------------- listing ---------------- */
@@ -68,7 +146,7 @@
     state.loading = true;
     const params = new URLSearchParams({
       offset: state.offset, limit: state.limit, q: state.q,
-      category: state.category, tag: state.tag, sort: state.sort,
+      category: state.category, tag: state.tag, sort: state.sort, owner: state.owner,
     });
     try {
       const data = await api("/api/posts?" + params);
@@ -89,22 +167,113 @@
     }
   }
 
+  function mediaOf(item) {
+    if (item.media && item.media.length) return item.media;
+    return [{ i: 0, kind: item.is_video ? "video" : "image", thumb: item.thumb, url: `/api/media/${item.id}/0` }];
+  }
+
+  function updateMedia(node, item, index) {
+    const media = mediaOf(item);
+    const safe = Math.max(0, Math.min(index, media.length - 1));
+    node._mediaIndex = safe;
+    const current = media[safe];
+    const img = node.querySelector(".thumb");
+    const vid = node.querySelector(".cardVideo");
+    const play = node.querySelector(".play");
+    vid.hidden = true;
+    vid.pause();
+    vid.removeAttribute("src");
+    img.hidden = false;
+    img.src = current.thumb;
+    play.style.display = current.kind === "video" ? "block" : "none";
+    node.classList.toggle("multi", media.length > 1);
+    const dots = node.querySelector(".dots");
+    dots.innerHTML = media.length > 1
+      ? media.map((m, i) => `<i class="${i === safe ? "on" : ""}" data-i="${i}"></i>`).join("")
+      : "";
+    dots.querySelectorAll("i").forEach((dot) => {
+      dot.onclick = (e) => { e.stopPropagation(); updateMedia(node, item, Number(dot.dataset.i)); };
+    });
+  }
+
+  function changeMedia(node, delta) {
+    const item = node._item;
+    if (!item) return;
+    const media = mediaOf(item);
+    updateMedia(node, item, ((node._mediaIndex || 0) + delta + media.length) % media.length);
+  }
+
+  function playCardVideo(node) {
+    const item = node._item;
+    if (!item) return;
+    const media = mediaOf(item);
+    const current = media[node._mediaIndex || 0];
+    if (!current || current.kind !== "video") return;
+    const img = node.querySelector(".thumb");
+    const vid = node.querySelector(".cardVideo");
+    img.hidden = true;
+    vid.hidden = false;
+    vid.src = current.url;
+    vid.controls = true;
+    vid.autoplay = true;
+    vid.muted = true;
+    vid.play().catch(() => {});
+    node.querySelector(".play").style.display = "none";
+  }
+
   function cardEl(item) {
     const node = $("cardTpl").content.firstElementChild.cloneNode(true);
     node.dataset.id = item.id;
+    node._item = item;
     node.classList.toggle("video", item.is_video);
     node.classList.toggle("notes", !!item.notes);
-    node.querySelector(".thumb").src = item.thumb;
-    node.querySelector(".thumb").alt = item.caption || item.shortcode;
-    node.querySelector(".owner").textContent = item.owner ? "@" + item.owner : "unknown";
-    node.querySelector(".caption").textContent = item.caption || "";
+    node.classList.toggle("selected", state.selected.has(item.id));
+    updateMedia(node, item, 0);
+
+    const owner = node.querySelector(".ownerLink");
+    owner.textContent = item.owner ? "@" + item.owner : "unknown";
+    owner.href = item.owner_url || (item.owner ? `https://www.instagram.com/${item.owner}/` : "#");
+    owner.onclick = (e) => { e.stopPropagation(); if (item.owner) setOwner(item.owner); };
+
+    const caption = node.querySelector(".caption");
+    caption.textContent = item.caption || "";
+    caption.onclick = (e) => { e.stopPropagation(); openPost(item.id); };
+
     node.querySelector(".likes").textContent = item.likes ? "♥ " + fmtNum(item.likes) : "";
     node.querySelector(".date").textContent = fmtDate(item.taken_at);
+
     const chip = node.querySelector(".catChip");
-    if (item.category) { chip.textContent = item.category; chip.classList.add("on"); }
-    const tags = node.querySelector(".cardTags");
-    tags.innerHTML = (item.tags || []).slice(0, 3).map((t) => `<span>#${esc(t)}</span>`).join("");
-    node.onclick = () => openPost(item.id);
+    if (item.category) {
+      const pct = item.confidence ? ` ${Math.round(item.confidence * 100)}%` : "";
+      chip.textContent = item.category + pct;
+      chip.classList.add("on");
+    }
+
+    node.querySelector(".cardTags").innerHTML =
+      (item.tags || []).slice(0, 3).map((t) => `<span>#${esc(t)}</span>`).join("");
+
+    node.querySelector(".play").onclick = (e) => { e.stopPropagation(); playCardVideo(node); };
+    node.querySelector(".prev").onclick = (e) => { e.stopPropagation(); changeMedia(node, -1); };
+    node.querySelector(".next").onclick = (e) => { e.stopPropagation(); changeMedia(node, 1); };
+
+    const thumbWrap = node.querySelector(".thumbWrap");
+    let touchX = null;
+    thumbWrap.addEventListener("touchstart", (e) => { touchX = e.touches[0].clientX; }, { passive: true });
+    thumbWrap.addEventListener("touchend", (e) => {
+      if (touchX == null) return;
+      const dx = e.changedTouches[0].clientX - touchX;
+      if (Math.abs(dx) > 35) changeMedia(node, dx < 0 ? 1 : -1);
+      touchX = null;
+    });
+
+    node.addEventListener("click", (e) => {
+      if (state.selectMode || e.shiftKey) {
+        e.preventDefault();
+        toggleSelect(item.id, node);
+      }
+    });
+
+    attachDrag(node);
     return node;
   }
 
@@ -112,9 +281,7 @@
     const grid = $("grid");
     items.forEach((item) => {
       const node = cardEl(item);
-      if (state.view === "list") node.classList.add("listCard");
       grid.appendChild(node);
-      attachDrag(node);
     });
   }
 
@@ -122,44 +289,109 @@
     const grid = $("grid");
     grid.className = "grid " + state.view + (state.sort === "manual" && state.view !== "post" ? " manual" : "");
     grid.innerHTML = "";
-    state.items.forEach((item) => {
-      const node = cardEl(item);
-      grid.appendChild(node);
-      attachDrag(node);
-    });
-    $("grid").classList.toggle("manual", state.sort === "manual" && state.view !== "post");
+    state.items.forEach((item) => grid.appendChild(cardEl(item)));
+    grid.classList.toggle("manual", state.sort === "manual" && state.view !== "post");
   }
 
-  /* ---------------- drag reorder ---------------- */
+  /* ---------------- selection ---------------- */
+  function toggleSelect(id, node) {
+    if (state.selected.has(id)) state.selected.delete(id);
+    else state.selected.add(id);
+    node.classList.toggle("selected", state.selected.has(id));
+    updateSelectBar();
+  }
+  function clearSelection() {
+    state.selected.clear();
+    document.querySelectorAll(".card.selected").forEach((n) => n.classList.remove("selected"));
+    updateSelectBar();
+  }
+  function updateSelectBar() {
+    $("selCount").textContent = state.selected.size;
+    $("selectBar").classList.toggle("hidden", state.selected.size === 0);
+    $("clearSel").classList.toggle("hidden", state.selected.size === 0);
+  }
+  $("clearSel").onclick = clearSelection;
+  $("selectToggle").onclick = () => {
+    state.selectMode = !state.selectMode;
+    $("selectToggle").classList.toggle("on", state.selectMode);
+    if (!state.selectMode) clearSelection();
+  };
+
+  const grid = $("grid");
+  grid.addEventListener("mousedown", (e) => {
+    if (!state.selectMode || e.target.closest(".card")) return;
+    rectStart = { x: e.clientX, y: e.clientY };
+    const box = $("selectBox");
+    box.style.left = e.clientX + "px";
+    box.style.top = e.clientY + "px";
+    box.style.width = "0px";
+    box.style.height = "0px";
+    box.classList.remove("hidden");
+  });
+  window.addEventListener("mousemove", (e) => {
+    if (!rectStart) return;
+    const box = $("selectBox");
+    const x = Math.min(e.clientX, rectStart.x);
+    const y = Math.min(e.clientY, rectStart.y);
+    const w = Math.abs(e.clientX - rectStart.x);
+    const h = Math.abs(e.clientY - rectStart.y);
+    box.style.left = x + "px"; box.style.top = y + "px";
+    box.style.width = w + "px"; box.style.height = h + "px";
+    const rect = { left: x, top: y, right: x + w, bottom: y + h };
+    document.querySelectorAll(".card").forEach((card) => {
+      const r = card.getBoundingClientRect();
+      const hit = !(r.right < rect.left || r.left > rect.right || r.bottom < rect.top || r.top > rect.bottom);
+      card.classList.toggle("selected", hit || state.selected.has(Number(card.dataset.id)));
+    });
+  });
+  window.addEventListener("mouseup", () => {
+    if (!rectStart) return;
+    rectStart = null;
+    $("selectBox").classList.add("hidden");
+    document.querySelectorAll(".card.selected").forEach((card) => {
+      state.selected.add(Number(card.dataset.id));
+    });
+    updateSelectBar();
+  });
+
+  /* ---------------- drag ---------------- */
   function attachDrag(node) {
-    if (state.sort !== "manual") return;
     node.draggable = true;
     node.addEventListener("dragstart", (e) => {
-      dragId = Number(node.dataset.id);
+      const id = Number(node.dataset.id);
+      dragIds = state.selected.has(id) ? [...state.selected] : [id];
+      if (!state.selected.has(id)) {
+        state.selected.clear();
+        document.querySelectorAll(".card.selected").forEach((n) => n.classList.remove("selected"));
+      }
       node.classList.add("drag");
       e.dataTransfer.effectAllowed = "move";
-      try { e.dataTransfer.setData("text/plain", String(dragId)); } catch (_) {}
+      try { e.dataTransfer.setData("text/plain", JSON.stringify(dragIds)); } catch (_) {}
     });
     node.addEventListener("dragend", () => {
       node.classList.remove("drag");
       document.querySelectorAll(".card.over").forEach((n) => n.classList.remove("over"));
+      dragIds = null;
+      updateSelectBar();
     });
     node.addEventListener("dragover", (e) => {
-      if (dragId == null) return;
-      e.preventDefault();
-      node.classList.add("over");
+      if (state.sort === "manual" && dragIds && dragIds.length === 1) {
+        e.preventDefault();
+        node.classList.add("over");
+      }
     });
     node.addEventListener("dragleave", () => node.classList.remove("over"));
     node.addEventListener("drop", async (e) => {
+      if (!(state.sort === "manual" && dragIds && dragIds.length === 1)) return;
       e.preventDefault();
       node.classList.remove("over");
       const targetId = Number(node.dataset.id);
-      if (!dragId || dragId === targetId) return;
+      if (dragIds[0] === targetId) return;
       await api("/api/reorder", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: dragId, before_id: targetId }),
+        body: JSON.stringify({ id: dragIds[0], before_id: targetId }),
       });
-      dragId = null;
+      dragIds = null;
       reset();
     });
   }
@@ -182,7 +414,7 @@
   function renderDrawer(post) {
     $("dPermalink").href = post.permalink;
     const tags = (post.tags || []).map((t) => `<span>#${esc(t)}</span>`).join("") || '<span class="hint">none</span>';
-    const catOptions = ["", ...(window.__CATEGORIES || [])]
+    const catOptions = ["", ...(window.__PRESETS || [...new Set([...state.customCats, "other"])])]
       .map((c) => `<option value="${esc(c)}" ${post.category === c ? "selected" : ""}>${esc(c || "— uncategorised —")}</option>`)
       .join("");
 
@@ -204,14 +436,22 @@
       }
     }
 
+    const owner = post.owner
+      ? `<a href="https://www.instagram.com/${esc(post.owner)}/" target="_blank" rel="noopener">@${esc(post.owner)}</a>`
+      : "unknown";
+    const pct = post.category_confidence ? ` · ${Math.round(post.category_confidence * 100)}%` : "";
+    const folderLink = post.folder
+      ? `<a href="${esc(post.permalink)}" target="_blank" rel="noopener">${esc(post.shortcode)}</a>`
+      : esc(post.shortcode);
+
     $("drawerBody").innerHTML = `
       ${media}
-      <div class="dTitle">@${esc(post.owner || "unknown")}</div>
+      <div class="dTitle">${owner}</div>
       <div class="dMeta">
         <span>${fmtDate(post.taken_at)}</span>
         <span>♥ ${fmtNum(post.likes)}</span>
         <span>${esc(post.typename || "")}</span>
-        ${post.category ? `<span>${esc(post.category)}${post.category_confidence ? " · " + Math.round(post.category_confidence * 100) + "%" : ""}</span>` : ""}
+        ${post.category ? `<span>${esc(post.category)}${pct}</span>` : ""}
         ${post.location ? `<span>📍 ${esc(post.location)}</span>` : ""}
         <span>${post.media.length} file${post.media.length === 1 ? "" : "s"}</span>
       </div>
@@ -234,8 +474,9 @@
 
       <div class="dSection">Details</div>
       <div class="dMeta">
-        <span>${esc(post.shortcode)}</span>
+        <span>${folderLink}</span>
         <span>${esc(post.folder || "")}</span>
+        <a href="${esc(post.permalink)}" target="_blank" rel="noopener">post URL ↗</a>
         ${post.vision_caption ? `<span>vision: ${esc(post.vision_caption)}</span>` : ""}
       </div>
     `;
@@ -327,8 +568,11 @@
     if (!node) return;
     node.classList.toggle("notes", !!item.notes);
     const chip = node.querySelector(".catChip");
-    if (item.category) { chip.textContent = item.category; chip.classList.add("on"); }
-    else chip.classList.remove("on");
+    if (item.category) {
+      const pct = item.confidence ? ` ${Math.round(item.confidence * 100)}%` : "";
+      chip.textContent = item.category + pct;
+      chip.classList.add("on");
+    } else chip.classList.remove("on");
     node.querySelector(".cardTags").innerHTML =
       (item.tags || []).slice(0, 3).map((t) => `<span>#${esc(t)}</span>`).join("");
   }
@@ -336,7 +580,15 @@
   /* ---------------- UI wiring ---------------- */
   $("search").addEventListener("input", (e) => {
     clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => { state.q = e.target.value.trim(); reset(); }, 300);
+    searchTimer = setTimeout(() => {
+      state.q = e.target.value.trim();
+      if (state.q) {
+        state.owner = "";
+        $("ownerFilter").classList.add("hidden");
+        $("ownerName").textContent = "";
+      }
+      reset();
+    }, 300);
   });
   $("sort").addEventListener("change", (e) => { state.sort = e.target.value; reset(); });
   $("clearTag").onclick = () => { state.tag = ""; reset(); loadFacets(); };
@@ -344,25 +596,31 @@
     btn.onclick = () => {
       state.view = btn.dataset.view;
       $("views").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b === btn));
-      renderAll();
+      const live = state.view === "live";
+      $("grid").classList.toggle("hidden", live);
+      $("sentinel").classList.toggle("hidden", live);
+      $("empty").classList.add("hidden");
+      $("liveView").classList.toggle("hidden", !live);
+      if (!live) renderAll();
     };
   });
   $("closeDrawer").onclick = closeDrawer;
   $("scrim").onclick = closeDrawer;
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { closeDrawer(); clearSelection(); }
+  });
 
   const io = new IntersectionObserver((entries) => {
-    if (entries.some((e) => e.isIntersecting) && !state.done) load(false);
+    if (entries.some((e) => e.isIntersecting) && !state.done && state.view !== "live") load(false);
   }, { rootMargin: "600px" });
   io.observe($("sentinel"));
 
   (async () => {
     try {
       const f = await api("/api/facets");
-      window.__CATEGORIES = f.presets || [];
-    } catch (_) { window.__CATEGORIES = []; }
+      window.__PRESETS = f.presets || [];
+    } catch (_) { window.__PRESETS = []; }
     await loadFacets();
-    addEventListener("resize", () => {});
     load(true);
   })();
 })();

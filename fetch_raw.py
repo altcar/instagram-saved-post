@@ -111,6 +111,7 @@ def main() -> None:
     parser.add_argument("--sleep", type=float, default=1.5)
     parser.add_argument("--covers", action="store_true", default=True)
     parser.add_argument("--no-covers", dest="covers", action="store_false")
+    parser.add_argument("--fresh", action="store_true", help="Restart from page 1 and replace items.jsonl")
     args = parser.parse_args()
 
     if not args.sessionid:
@@ -124,6 +125,11 @@ def main() -> None:
     state_path = out / "state.json"
     media_root = Path(args.media)
     state = load_state(state_path)
+    if args.fresh:
+        state = {"page": 0, "next_max_id": None, "count": 0, "done": False}
+        if items_path.exists():
+            items_path.unlink()
+        save_state(state_path, state)
 
     db = None
     if Path(args.db).exists():
@@ -137,7 +143,7 @@ def main() -> None:
         print("Raw fetch already complete.")
         return
 
-    items_file = items_path.open("a", encoding="utf-8")
+    items_file = items_path.open("w" if args.fresh else "a", encoding="utf-8")
     covers_done = 0
     try:
         while True:
