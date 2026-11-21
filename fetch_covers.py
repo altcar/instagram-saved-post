@@ -5,7 +5,7 @@ Reads the raw feed items stored by fetch_raw.py, resolves each post's folder
 through the SQLite index, and writes <folder>/cover.jpg. Skips covers that
 already exist, so it is safe to re-run.
 
-    python fetch_covers.py --raw data/1911/raw --db data/archive.db --workers 8
+    python fetch_covers.py --raw data/raw --db data/archive.db --workers 8
 """
 
 from __future__ import annotations
@@ -48,9 +48,9 @@ def to_jpeg(data: bytes) -> Optional[bytes]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fetch cover images in parallel")
-    parser.add_argument("--raw", default="data/1911/raw/items.jsonl")
-    parser.add_argument("--media", default="data/1911/saved_media")
-    parser.add_argument("--db", default="data/1911/archive.db")
+    parser.add_argument("--raw", default="data/raw/items.jsonl")
+    parser.add_argument("--media", default="data/posts")
+    parser.add_argument("--db", default="data/archive.db")
     parser.add_argument("--workers", type=int, default=8)
     args = parser.parse_args()
 

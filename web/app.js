@@ -188,17 +188,19 @@
 
     let media = "";
     if (post.media.length) {
-      if (post.is_video) {
-        media = `<div class="dMedia" id="videoSlot">
-          <img src="${post.cover}" onerror="this.onerror=null;this.src='${post.thumb}'" alt="">
-          <button class="btn primary playBig" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)">▶ Play video</button>
-        </div>`;
-      } else {
-        media = `<div class="dMedia"><img id="mainImage" src="${post.media[0].url}" alt=""></div>`;
-        if (post.media.length > 1) {
-          media += `<div class="dCarousel" id="carousel">${post.media.map((m, i) =>
-            `<img src="${m.url}" data-i="${i}" class="${i === 0 ? "sel" : ""}" alt="">`).join("")}</div>`;
+      media = `<div class="dGallery" id="gallery">` + post.media.map((m, i) => {
+        if (m.kind === "video") {
+          return `<video class="gItem" data-i="${i}" controls playsinline preload="metadata"
+            poster="${post.cover}" src="${m.url}" muted ${i === 0 ? "autoplay" : ""}></video>`;
         }
+        return `<img class="gItem" data-i="${i}" src="${m.url}" alt="">`;
+      }).join("") + `</div>`;
+      if (post.media.length > 1) {
+        media += `<div class="gNav">
+          <button class="btn" id="gPrev">‹</button>
+          <span class="gCount" id="gCount">1 / ${post.media.length}</span>
+          <button class="btn" id="gNext">›</button>
+        </div>`;
       }
     }
 
@@ -238,21 +240,32 @@
       </div>
     `;
 
-    if (post.is_video) {
-      $("videoSlot").querySelector(".playBig").onclick = () => {
-        const vid = document.createElement("video");
-        vid.controls = true; vid.autoplay = true; vid.playsInline = true;
-        vid.src = post.media[0].url;
-        $("videoSlot").replaceWith(vid);
+    const gallery = $("gallery");
+    if (gallery) {
+      const items = [...gallery.querySelectorAll(".gItem")];
+      const count = $("gCount");
+      const setActive = () => {
+        const i = Math.min(items.length - 1,
+          Math.round(gallery.scrollLeft / Math.max(1, gallery.clientWidth)));
+        if (count) count.textContent = `${i + 1} / ${items.length}`;
+        items.forEach((el, j) => {
+          if (el.tagName === "VIDEO") {
+            if (j === i) el.play().catch(() => {});
+            else el.pause();
+          }
+        });
       };
-    } else if (post.media.length > 1) {
-      $("carousel").querySelectorAll("img").forEach((img) => {
-        img.onclick = () => {
-          $("mainImage").src = post.media[Number(img.dataset.i)].url;
-          $("carousel").querySelectorAll("img").forEach((n) => n.classList.remove("sel"));
-          img.classList.add("sel");
-        };
+      gallery.addEventListener("scroll", () => {
+        clearTimeout(gallery.__t);
+        gallery.__t = setTimeout(setActive, 120);
       });
+      if ($("gPrev")) $("gPrev").onclick = () =>
+        gallery.scrollBy({ left: -gallery.clientWidth, behavior: "smooth" });
+      if ($("gNext")) $("gNext").onclick = () =>
+        gallery.scrollBy({ left: gallery.clientWidth, behavior: "smooth" });
+      setActive();
+      const first = items[0];
+      if (first && first.tagName === "VIDEO") first.play().catch(() => {});
     }
 
     $("catSelect").onchange = async (e) => {

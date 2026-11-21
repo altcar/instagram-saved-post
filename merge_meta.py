@@ -4,8 +4,8 @@
 Useful after a resumed download is interrupted before it rewrites the run JSON:
 every downloaded post already has meta.json, so nothing is lost.
 
-    python merge_meta.py --json data/1911/saved_posts.json \
-        --media data/1911/saved_media
+    python merge_meta.py --json data/saved_posts.json \
+        --media data/posts
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ from pathlib import Path
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Merge folder metadata into run JSON")
-    parser.add_argument("--json", default="data/1911/saved_posts.json")
-    parser.add_argument("--media", default="data/1911/saved_media")
+    parser.add_argument("--json", default="data/saved_posts.json")
+    parser.add_argument("--media", default="data/posts")
     args = parser.parse_args()
 
     json_path = Path(args.json)

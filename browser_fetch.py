@@ -338,9 +338,9 @@ def posts_missing_media(db: Path) -> List[str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Browser fallback for hard posts")
-    parser.add_argument("--db", default="data/1911/archive.db")
+    parser.add_argument("--db", default="data/archive.db")
     parser.add_argument("--dedup", default="data/dedup.db")
-    parser.add_argument("--media", default="data/1911/saved_media")
+    parser.add_argument("--media", default="data/posts")
     parser.add_argument("--shortcode", action="append", default=[])
     parser.add_argument("--missing", action="store_true")
     parser.add_argument("--limit", type=int)

@@ -8,8 +8,8 @@ download). It is resumable.
 
 Examples:
     export IG_SESSIONID='...'
-    python fetch_raw.py --out data/1911/raw --media data/1911/saved_media \
-        --db data/1911/archive.db --covers
+    python fetch_raw.py --out data/raw --media data/posts \
+        --db data/archive.db --covers
 """
 
 from __future__ import annotations
@@ -104,9 +104,9 @@ def download_cover(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fetch raw saved feed metadata")
-    parser.add_argument("--out", default="data/1911/raw")
-    parser.add_argument("--media", default="data/1911/saved_media")
-    parser.add_argument("--db", default="data/1911/archive.db")
+    parser.add_argument("--out", default="data/raw")
+    parser.add_argument("--media", default="data/posts")
+    parser.add_argument("--db", default="data/archive.db")
     parser.add_argument("--sessionid", default=os.environ.get("IG_SESSIONID", ""))
     parser.add_argument("--sleep", type=float, default=1.5)
     parser.add_argument("--covers", action="store_true", default=True)

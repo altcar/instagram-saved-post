@@ -6,7 +6,7 @@ folders exist, the current list position, download rate/ETA, failures, disk
 usage and the tail of the downloader log.
 
 Example:
-    python progress_gui.py --data data/1911 --log /tmp/ig.log --total 971
+    python progress_gui.py --data data --log /tmp/ig.log --total 971
 """
 
 from __future__ import annotations
@@ -360,7 +360,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Live download progress GUI")
-    parser.add_argument("--data", default="data/1911", help="Run folder (contains saved_media)")
+    parser.add_argument("--data", default="data", help="Run folder (contains saved_media)")
     parser.add_argument("--log", default="/tmp/opencode/ig_1911.log", help="Downloader log file")
     parser.add_argument("--port", type=int, default=8766, help="HTTP port")
     parser.add_argument("--host", default="127.0.0.1", help="Bind address")

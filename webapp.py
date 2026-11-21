@@ -9,8 +9,8 @@ Designed to stay light on CPU, RAM and bandwidth:
   * video uses HTTP Range requests.
 
 Run:
-    python webapp.py --db data/1911/archive.db --media data/1911/saved_media \
-        --cache data/1911/.cache --port 8770
+    python webapp.py --db data/archive.db --media data/posts \
+        --cache data/.cache --port 8770
 """
 
 from __future__ import annotations
@@ -413,7 +413,8 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _file(self, path: Path, content_type: Optional[str] = None) -> None:
+    def _file(self, path: Path, content_type: Optional[str] = None,
+              cache: bool = True) -> None:
         size = path.stat().st_size
         ctype = content_type or mimetypes.guess_type(str(path))[0] or "application/octet-stream"
         range_header = self.headers.get("Range")
@@ -435,7 +436,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Accept-Ranges", "bytes")
         if status == 206:
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
-        self.send_header("Cache-Control", "public, max-age=86400")
+        self.send_header("Cache-Control", "public, max-age=86400" if cache else "no-cache")
         self.end_headers()
         with path.open("rb") as handle:
             handle.seek(start)
@@ -455,7 +456,7 @@ class Handler(BaseHTTPRequestHandler):
         if not str(path).startswith(str(WEB_ROOT.resolve())) or not path.is_file():
             self._json(404, {"error": "not found"})
             return
-        self._file(path)
+        self._file(path, cache=False)
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
@@ -555,9 +556,9 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Browse saved Instagram archive")
-    parser.add_argument("--db", default="data/1911/archive.db")
-    parser.add_argument("--media", default="data/1911/saved_media")
-    parser.add_argument("--cache", default="data/1911/.cache")
+    parser.add_argument("--db", default="data/archive.db")
+    parser.add_argument("--media", default="data/posts")
+    parser.add_argument("--cache", default="data/.cache")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8770)
     args = parser.parse_args()

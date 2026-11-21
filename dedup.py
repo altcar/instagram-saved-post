@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Cross-run dedup index: never download the same Instagram post twice.
 
-    python dedup.py backfill --run-db data/1911/archive.db --dedup data/dedup.db
+    python dedup.py backfill --run-db data/archive.db --dedup data/dedup.db
     python dedup.py stats --dedup data/dedup.db
 """
 

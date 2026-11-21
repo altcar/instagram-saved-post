@@ -14,11 +14,11 @@ remains self-contained for portability:
         meta.json
 
 Usage:
-    python archive_db.py import --db data/1911/archive.db \
-        --json data/1911/saved_posts.json --media data/1911/saved_media
-    python archive_db.py write-files --db data/1911/archive.db \
-        --media data/1911/saved_media
-    python archive_db.py stats --db data/1911/archive.db
+    python archive_db.py import --db data/archive.db \
+        --json data/saved_posts.json --media data/posts
+    python archive_db.py write-files --db data/archive.db \
+        --media data/posts
+    python archive_db.py stats --db data/archive.db
 """
 
 from __future__ import annotations
@@ -43,6 +43,7 @@ MEDIA_EXTS = {
     ".mp4", ".mov", ".m4v", ".webm", ".mkv",
 }
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".bmp"}
+VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".webm", ".mkv"}
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -273,9 +274,7 @@ def sync_folders(conn: sqlite3.Connection, media_root: Path) -> int:
     for folder in sorted(media_root.iterdir()):
         if not folder.is_dir() or folder.name in known:
             continue
-        if "_" not in folder.name:
-            continue
-        shortcode = folder.name.split("_", 1)[1]
+        shortcode = folder.name.split("_", 1)[1] if "_" in folder.name else folder.name
         caption = ""
         for txt in sorted(folder.glob("*.txt")):
             caption = txt.read_text(encoding="utf-8", errors="replace").strip()
@@ -358,11 +357,45 @@ def write_post_files(
             "media": media,
             "cover": Path(row["cover"]).name if row["cover"] else None,
             "category": row["category"],
+            "category_confidence": row["category_confidence"],
+            "category_source": row["category_source"],
+            "vision_caption": row["vision_caption"],
+            "ocr_text": row["ocr_text"],
+            "transcript": row["transcript"],
         }
         (folder / "meta.json").write_text(
             json.dumps(meta, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
+
+        tags = [
+            r["tag"] for r in conn.execute(
+                "SELECT tag FROM post_tags WHERE media_id=? ORDER BY tag",
+                (row["media_id"],),
+            )
+        ]
+        classification = {
+            "category": row["category"],
+            "confidence": row["category_confidence"],
+            "source": row["category_source"],
+            "tags": tags,
+            "notes": row["notes"] or "",
+            "vision_caption": row["vision_caption"],
+            "ocr_text": row["ocr_text"],
+            "transcript": row["transcript"],
+        }
+        (folder / "classification.json").write_text(
+            json.dumps(classification, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        for key, filename in (
+            ("vision_caption", "vision.txt"),
+            ("ocr_text", "ocr.txt"),
+            ("transcript", "transcript.txt"),
+        ):
+            value = row[key]
+            if value:
+                (folder / filename).write_text(value + "\n", encoding="utf-8")
 
         if make_covers and not (folder / "cover.jpg").is_file():
             cover_src = None
@@ -478,21 +511,21 @@ def stats(conn: sqlite3.Connection) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Archive SQLite index")
-    parser.add_argument("--db", default="data/1911/archive.db")
+    parser.add_argument("--db", default="data/archive.db")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_import = sub.add_parser("import")
     p_import.add_argument("--db", default=argparse.SUPPRESS)
-    p_import.add_argument("--json", default="data/1911/saved_posts.json")
-    p_import.add_argument("--media", default="data/1911/saved_media")
+    p_import.add_argument("--json", default="data/saved_posts.json")
+    p_import.add_argument("--media", default="data/posts")
 
     p_sync = sub.add_parser("sync")
     p_sync.add_argument("--db", default=argparse.SUPPRESS)
-    p_sync.add_argument("--media", default="data/1911/saved_media")
+    p_sync.add_argument("--media", default="data/posts")
 
     p_files = sub.add_parser("write-files")
     p_files.add_argument("--db", default=argparse.SUPPRESS)
-    p_files.add_argument("--media", default="data/1911/saved_media")
+    p_files.add_argument("--media", default="data/posts")
     p_files.add_argument("--limit", type=int)
     p_files.add_argument("--covers", action="store_true")
 
@@ -501,8 +534,8 @@ def main() -> None:
 
     p_export = sub.add_parser("export-json")
     p_export.add_argument("--db", default=argparse.SUPPRESS)
-    p_export.add_argument("--json", default="data/1911/saved_posts.json")
-    p_export.add_argument("--media", default="data/1911/saved_media")
+    p_export.add_argument("--json", default="data/saved_posts.json")
+    p_export.add_argument("--media", default="data/posts")
 
     args = parser.parse_args()
     conn = connect(Path(args.db))

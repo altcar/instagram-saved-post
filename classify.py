@@ -14,8 +14,8 @@ clickbait or misleading captions ("Japanese footstep" style memes, car specs,
 etc.) because it looks at the image, not the author's words.
 
 Examples:
-    python classify.py fast --db data/1911/archive.db --media data/1911/saved_media
-    python classify.py clip --db data/1911/archive.db --media data/1911/saved_media
+    python classify.py fast --db data/archive.db --media data/posts
+    python classify.py clip --db data/archive.db --media data/posts
     python classify.py caption --limit 200
     python classify.py ocr --limit 500
     python classify.py transcribe --limit 50
@@ -33,6 +33,11 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from webapp import Archive
+
+try:
+    import imageio_ffmpeg
+except Exception:  # pragma: no cover
+    imageio_ffmpeg = None
 
 # ---------------------------------------------------------------------------
 # heuristic rules
@@ -154,7 +159,7 @@ def connect(path: Path) -> sqlite3.Connection:
 
 
 def rows_for(conn: sqlite3.Connection, stage: str, limit: Optional[int],
-             filter_mode: str = "all") -> List[sqlite3.Row]:
+             filter_mode: str = "all", redo: str = "none") -> List[sqlite3.Row]:
     where = {
         "fast": "1=1",
         "clip": "(category_source IS NULL OR category_source NOT LIKE '%clip%')",
@@ -162,6 +167,8 @@ def rows_for(conn: sqlite3.Connection, stage: str, limit: Optional[int],
         "ocr": "ocr_text IS NULL",
         "transcribe": "transcript IS NULL AND is_video = 1",
     }[stage]
+    if stage == "clip" and redo == "video":
+        where = "is_video = 1"
     if filter_mode == "other":
         where += " AND (category = 'other' OR category IS NULL)"
     elif filter_mode == "lowconf":
@@ -224,6 +231,65 @@ def _archive(args: argparse.Namespace) -> Archive:
     return Archive(Path(args.db), Path(args.media), Path(args.cache))
 
 
+def video_duration(video: Path) -> Optional[float]:
+    if imageio_ffmpeg is None:
+        return None
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    try:
+        proc = subprocess.run(
+            [ffmpeg, "-hide_banner", "-i", str(video)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=60,
+        )
+    except Exception:
+        return None
+    match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", proc.stderr)
+    if not match:
+        return None
+    hours, minutes, seconds = match.groups()
+    return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+
+
+def midpoint_frame(
+    archive: Archive, row: sqlite3.Row, width: int = 480
+) -> Optional[Path]:
+    """Vision frame: midpoint of the video, or the cover/thumbnail for images."""
+    if not row["is_video"]:
+        return archive.thumbnail(row["id"], width)
+    cache_dir = Path(archive.cache_dir) / "mid"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    target = cache_dir / f"{row['id']}.jpg"
+    if target.is_file() and target.stat().st_size > 0:
+        return target
+    media = archive._media_paths(row["id"])
+    video = next(
+        (archive.media_root / path for path, kind in media if kind == "video"),
+        None,
+    )
+    if video is None or not video.is_file() or imageio_ffmpeg is None:
+        return archive.thumbnail(row["id"], width)
+    duration = video_duration(video)
+    midpoint = duration / 2 if duration else 1.0
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    try:
+        subprocess.run(
+            [
+                ffmpeg, "-y", "-loglevel", "error",
+                "-ss", f"{midpoint:.3f}", "-i", str(video),
+                "-frames:v", "1", "-vf", f"scale={width}:-1", str(target),
+            ],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=60,
+        )
+    except Exception:
+        return archive.thumbnail(row["id"], width)
+    return target if target.is_file() else archive.thumbnail(row["id"], width)
+
+
 def stage_clip(conn: sqlite3.Connection, args: argparse.Namespace) -> None:
     import torch
     from transformers import CLIPModel, CLIPProcessor
@@ -262,7 +328,7 @@ def stage_clip(conn: sqlite3.Connection, args: argparse.Namespace) -> None:
         text_features = text_features / text_features.norm(dim=-1, keepdim=True)
 
     archive = _archive(args)
-    rows = rows_for(conn, "clip", args.limit)
+    rows = rows_for(conn, "clip", args.limit, redo=getattr(args, "redo", "none"))
     id_to_row = {row["id"]: row for row in rows}
     print(f"clip: {len(rows)} posts")
     batch_size = args.batch
@@ -273,7 +339,7 @@ def stage_clip(conn: sqlite3.Connection, args: argparse.Namespace) -> None:
         images = []
         ids = []
         for row in batch:
-            thumb = archive.thumbnail(row["id"], 360)
+            thumb = midpoint_frame(archive, row, 360)
             if not thumb:
                 continue
             try:
@@ -327,7 +393,7 @@ def stage_caption(conn: sqlite3.Connection, args: argparse.Namespace) -> None:
     rows = rows_for(conn, "caption", args.limit, args.filter)
     print(f"caption: {len(rows)} posts")
     for i, row in enumerate(rows, 1):
-        thumb = archive.thumbnail(row["id"], 480)
+        thumb = midpoint_frame(archive, row, 480)
         if not thumb:
             continue
         try:
@@ -352,7 +418,7 @@ def stage_ocr(conn: sqlite3.Connection, args: argparse.Namespace) -> None:
     rows = rows_for(conn, "ocr", args.limit, args.filter)
     print(f"ocr: {len(rows)} posts")
     for i, row in enumerate(rows, 1):
-        thumb = archive.thumbnail(row["id"], 720)
+        thumb = midpoint_frame(archive, row, 720)
         if not thumb:
             continue
         try:
@@ -421,13 +487,14 @@ def stage_transcribe(conn: sqlite3.Connection, args: argparse.Namespace) -> None
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Classify saved posts")
-    parser.add_argument("--db", default="data/1911/archive.db")
-    parser.add_argument("--media", default="data/1911/saved_media")
-    parser.add_argument("--cache", default="data/1911/.cache")
-    parser.add_argument("--raw", default="data/1911/raw/items.jsonl")
+    parser.add_argument("--db", default="data/archive.db")
+    parser.add_argument("--media", default="data/posts")
+    parser.add_argument("--cache", default="data/.cache")
+    parser.add_argument("--raw", default="data/raw/items.jsonl")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--batch", type=int, default=32)
     parser.add_argument("--filter", default="all", choices=["all", "other", "lowconf"])
+    parser.add_argument("--redo", default="none", choices=["none", "video"])
     sub = parser.add_subparsers(dest="stage", required=True)
     for name in ("fast", "clip", "caption", "ocr", "transcribe"):
         p = sub.add_parser(name)
@@ -438,6 +505,7 @@ def main() -> None:
         p.add_argument("--limit", type=int, default=argparse.SUPPRESS)
         p.add_argument("--batch", type=int, default=argparse.SUPPRESS)
         p.add_argument("--filter", default=argparse.SUPPRESS, choices=["all", "other", "lowconf"])
+        p.add_argument("--redo", default=argparse.SUPPRESS, choices=["none", "video"])
     args = parser.parse_args()
     conn = connect(Path(args.db))
     if args.stage == "fast":

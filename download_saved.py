@@ -17,6 +17,7 @@ from instaloader.exceptions import (
 )
 
 from dedup import Dedup
+import archive_db as adb
 
 
 SAVED_POSTS_URL = "https://www.instagram.com/api/v1/feed/saved/posts/"
@@ -352,6 +353,7 @@ def download_saved(
     skip_existing: bool,
     with_comments: bool,
     dedup_path: Path,
+    archive_db: Path | None = None,
     unsave: bool = False,
     covers: bool = True,
 ) -> None:
@@ -360,7 +362,8 @@ def download_saved(
     print(f"Logged in as {logged_in_as}")
 
     dedup = Dedup(dedup_path)
-    run = output_dir.resolve().parent.name
+    run = "posts"
+    archive_conn = adb.connect(archive_db) if archive_db else None
     records: List[Dict[str, Any]] = []
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -370,7 +373,10 @@ def download_saved(
     existing_dirs: Dict[str, Path] = {}
     if skip_existing:
         for child in output_dir.iterdir():
-            if child.is_dir() and "_" in child.name:
+            if not child.is_dir():
+                continue
+            existing_dirs[child.name] = child
+            if "_" in child.name:
                 existing_dirs.setdefault(child.name.split("_", 1)[1], child)
 
     existing_records: Dict[str, Dict[str, Any]] = {}
@@ -386,12 +392,12 @@ def download_saved(
         for idx, (post, media) in enumerate(
             iter_saved_posts(loader, logged_in_as, limit), start=1
         ):
-            target = f"{idx:04d}_{post.shortcode}"
+            target = str(post.mediaid)
             seen = dedup.folder_for(post.mediaid, post.shortcode)
             if seen:
                 print(f"Skip seen {post.shortcode} ({seen})")
                 continue
-            target_dir = existing_dirs.get(post.shortcode)
+            target_dir = existing_dirs.get(target) or existing_dirs.get(post.shortcode)
 
             if target_dir is not None:
                 print(f"Skip existing {target_dir.name}")
@@ -420,6 +426,34 @@ def download_saved(
                 record["media"] = collect_media_files(target_dir, output_dir)
             write_sidecars(target_dir, record)
             dedup.mark(post.mediaid, post.shortcode, target_dir.name, run)
+            if archive_conn is not None:
+                cover_rel = (
+                    f"{target_dir.name}/cover.jpg"
+                    if (target_dir / "cover.jpg").is_file() else None
+                )
+                try:
+                    adb.upsert_post(
+                        archive_conn,
+                        media_id=str(post.mediaid),
+                        shortcode=post.shortcode,
+                        media_root=output_dir,
+                        taken_at=record.get("taken_at"),
+                        owner_username=record.get("owner_username"),
+                        owner_id=record.get("owner_id"),
+                        caption=record.get("caption") or "",
+                        likes=record.get("likes") or 0,
+                        is_video=bool(record.get("is_video")),
+                        typename=record.get("typename"),
+                        location=record.get("location"),
+                        hashtags=record.get("hashtags") or [],
+                        folder=target_dir.name,
+                        cover=cover_rel,
+                        sort_order=-int(time.time()),
+                        source="api",
+                    )
+                    archive_conn.commit()
+                except Exception as exc:
+                    print(f"Archive update failed for {target}: {exc}", file=sys.stderr)
 
             if unsave:
                 try:
@@ -459,10 +493,10 @@ def parse_args() -> argparse.Namespace:
         "--sessionid",
         help="Instagram sessionid cookie value to skip interactive login/2FA.",
     )
-    parser.add_argument("--out", default="saved_media", help="Folder for media files")
+    parser.add_argument("--out", default="data/posts", help="Folder for media files")
     parser.add_argument(
         "--json",
-        default="saved_posts.json",
+        default="data/saved_posts.json",
         help="Path to write JSON metadata",
     )
     parser.add_argument(
@@ -482,6 +516,11 @@ def parse_args() -> argparse.Namespace:
         "--db",
         default="data/dedup.db",
         help="Cross-run SQLite dedup index (post ids already downloaded).",
+    )
+    parser.add_argument(
+        "--archive-db",
+        default="data/archive.db",
+        help="Unified archive index updated after each download.",
     )
     parser.add_argument(
         "--unsave",
@@ -510,6 +549,7 @@ def main() -> None:
         skip_existing=args.skip_existing,
         with_comments=args.comments,
         dedup_path=Path(args.db),
+        archive_db=Path(args.archive_db),
         unsave=args.unsave,
         covers=args.covers,
     )
