@@ -391,7 +391,6 @@
       }
       node.classList.add("drag");
       suppressClick = true;
-      setTimeout(() => { suppressClick = false; }, 200);
       e.dataTransfer.effectAllowed = "move";
       try { e.dataTransfer.setData("text/plain", JSON.stringify(dragIds)); } catch (_) {}
     });
@@ -400,6 +399,7 @@
       document.querySelectorAll(".card.over").forEach((n) => n.classList.remove("over"));
       dragIds = null;
       updateSelectBar();
+      setTimeout(() => { suppressClick = false; }, 120);
     });
     node.addEventListener("dragover", (e) => {
       if (state.sort === "manual" && dragIds && dragIds.length === 1) {

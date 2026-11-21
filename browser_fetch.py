@@ -109,11 +109,15 @@ def collect_media(node: Dict[str, Any]) -> List[Dict[str, str]]:
     return items
 
 
-def next_folder(media_root: Path, shortcode: str) -> Path:
+def next_folder(media_root: Path, shortcode: str, media_id: str = "") -> Path:
     media_root.mkdir(parents=True, exist_ok=True)
+    if media_id and (media_root / media_id).is_dir():
+        return media_root / media_id
     existing = sorted(media_root.glob(f"*_{shortcode}"))
     if existing:
         return existing[0]
+    if media_id:
+        return media_root / media_id
     max_index = 0
     for folder in media_root.iterdir():
         if folder.is_dir() and "_" in folder.name:
@@ -204,7 +208,10 @@ def fetch_post(shortcode: str, args: argparse.Namespace, session: requests.Sessi
             return False
         node = {"image_versions2": {"candidates": [{"url": og_image}]}, "code": shortcode}
 
-    folder = next_folder(Path(args.media), shortcode)
+    actual_code = str(node.get("code") or shortcode)
+    media_key = str(node.get("pk") or node.get("id") or "")
+    shortcode = actual_code
+    folder = next_folder(Path(args.media), shortcode, media_key)
     folder.mkdir(parents=True, exist_ok=True)
 
     items = collect_media(node)

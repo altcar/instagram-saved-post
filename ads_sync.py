@@ -91,7 +91,7 @@ def main() -> None:
         row = conn.execute(
             "SELECT * FROM posts WHERE shortcode=?", (code,)
         ).fetchone()
-        if row is None:
+        if row is None or not row["folder"]:
             continue
         folder = Path(args.posts) / row["folder"]
         folder.mkdir(parents=True, exist_ok=True)
