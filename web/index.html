@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Saved Archive</title>
-<link rel="stylesheet" href="/static/style.css?v=7">
+<link rel="stylesheet" href="/static/style.css?v=8">
 </head>
 <body>
 <nav class="socialBar" aria-label="Elsewhere">
@@ -34,7 +34,7 @@
       <button id="clearOwner" class="link" title="Clear">✕</button>
     </div>
 
-    <div class="sideHead">My categories <button id="addCat" class="link">+ add</button></div>
+    <div class="sideHead">My categories <span><button id="addCat" class="link">+ add</button> <button id="resetFilter" class="link hidden">reset</button></span></div>
     <div id="cats" class="catList"></div>
     <div class="sideTip">Drop selected posts on a category to assign them.</div>
 
@@ -56,14 +56,14 @@
       </div>
       <select id="sort" title="Sort">
         <option value="manual">Saved order (newest first)</option>
+        <option value="uncategorised">Uncategorised first</option>
         <option value="newest">Newest post</option>
         <option value="oldest">Oldest post</option>
         <option value="likes">Most liked</option>
         <option value="random">Shuffle</option>
       </select>
-      <button id="selectToggle" class="btn small" title="Select multiple">Select</button>
       <div class="count" id="count"></div>
-      <div class="hint" id="hint">Click a caption to open · drag to reorder</div>
+      <div class="hint" id="hint">Click a card to open · drag empty space to select</div>
     </header>
 
     <div id="grid" class="grid"></div>
@@ -110,7 +110,10 @@
       <span class="pickBadge">✓</span>
     </div>
     <div class="cardBody">
-      <div class="owner"><a class="ownerLink" target="_blank" rel="noopener"></a></div>
+      <div class="ownerRow">
+        <input type="checkbox" class="pickBox" title="Select">
+        <div class="owner"><a class="ownerLink" target="_blank" rel="noopener"></a></div>
+      </div>
       <div class="caption"></div>
       <div class="cardTags"></div>
       <div class="cardFoot"><span class="likes"></span><span class="date"></span></div>
@@ -118,6 +121,6 @@
   </article>
 </template>
 
-<script src="/static/app.js?v=7"></script>
+<script src="/static/app.js?v=8"></script>
 </body>
 </html>

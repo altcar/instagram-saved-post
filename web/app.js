@@ -3,15 +3,17 @@
 
   const $ = (id) => document.getElementById(id);
   const state = {
-    q: "", category: "all", tag: "", owner: "", sort: "manual", view: "grid",
+    q: "", category: "", tag: "", owner: "", sort: "manual", view: "grid",
     offset: 0, limit: 60, total: 0, items: [], loading: false, done: false,
-    selected: new Set(), selectMode: false,
+    selected: new Set(),
     customCats: JSON.parse(localStorage.getItem("ig_custom_cats") || "[]"),
   };
   let dragIds = null;
   let saveTimer = null;
   let searchTimer = null;
   let rectStart = null;
+  let rectMoved = false;
+  let suppressClick = false;
 
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -38,22 +40,25 @@
 
     const map = new Map();
     for (const c of f.categories) map.set(c.name, c.count);
-    for (const c of state.customCats) if (!map.has(c)) map.set(c, 0);
-    const cats = [{ name: "all", count: f.total }, ...[...map.entries()]
-      .filter(([name]) => name !== "all")
-      .sort((a, b) => b[1] - a[1])
-      .map(([name, count]) => ({ name, count }))];
+    const adsCount = f.ads ?? map.get("ad") ?? 0;
+    const cats = [
+      { name: "ad", count: adsCount },
+      ...state.customCats
+        .filter((name) => name !== "ad")
+        .map((name) => ({ name, count: map.get(name) || 0 })),
+    ];
 
     $("cats").innerHTML = cats.map((c) => `
       <div class="cat ${state.category === c.name ? "on" : ""}" data-cat="${esc(c.name)}"
            title="Click to filter · drop posts to categorise">
-        <span>${esc(c.name === "all" ? "All posts" : c.name)}</span>
+        <span>${esc(c.name === "ad" ? "Ads (real Instagram ads)" : c.name)}</span>
         <b>${fmtNum(c.count)}</b>
       </div>`).join("");
+    $("resetFilter").classList.toggle("hidden", !state.category);
 
     $("cats").querySelectorAll(".cat").forEach((el) => {
       el.onclick = () => {
-        state.category = el.dataset.cat;
+        state.category = state.category === el.dataset.cat ? "" : el.dataset.cat;
         state.tag = "";
         reset();
         loadFacets();
@@ -88,6 +93,7 @@
     $("clearSel").classList.toggle("hidden", !state.selected.size);
   }
 
+  $("resetFilter").onclick = () => { state.category = ""; reset(); loadFacets(); };
   $("addCat").onclick = () => {
     const name = prompt("New category name");
     if (!name) return;
@@ -235,9 +241,13 @@
     owner.href = item.owner_url || (item.owner ? `https://www.instagram.com/${item.owner}/` : "#");
     owner.onclick = (e) => { e.stopPropagation(); if (item.owner) setOwner(item.owner); };
 
+    const box = node.querySelector(".pickBox");
+    box.checked = state.selected.has(item.id);
+    box.onclick = (e) => e.stopPropagation();
+    box.onchange = () => toggleSelect(item.id, node, box.checked);
+
     const caption = node.querySelector(".caption");
     caption.textContent = item.caption || "";
-    caption.onclick = (e) => { e.stopPropagation(); openPost(item.id); };
 
     node.querySelector(".likes").textContent = item.likes ? "♥ " + fmtNum(item.likes) : "";
     node.querySelector(".date").textContent = fmtDate(item.taken_at);
@@ -267,10 +277,11 @@
     });
 
     node.addEventListener("click", (e) => {
-      if (state.selectMode || e.shiftKey) {
-        e.preventDefault();
-        toggleSelect(item.id, node);
-      }
+      if (suppressClick) { suppressClick = false; return; }
+      if (e.target.closest(".ownerRow") || e.target.closest(".navBtn")
+          || e.target.closest(".play") || e.target.closest(".cardVideo")
+          || e.target.closest("input")) return;
+      openPost(item.id);
     });
 
     attachDrag(node);
@@ -294,15 +305,22 @@
   }
 
   /* ---------------- selection ---------------- */
-  function toggleSelect(id, node) {
-    if (state.selected.has(id)) state.selected.delete(id);
-    else state.selected.add(id);
-    node.classList.toggle("selected", state.selected.has(id));
+  function toggleSelect(id, node, checked) {
+    const on = checked === undefined ? !state.selected.has(id) : checked;
+    if (on) state.selected.add(id);
+    else state.selected.delete(id);
+    node.classList.toggle("selected", on);
+    const box = node.querySelector(".pickBox");
+    if (box) box.checked = on;
     updateSelectBar();
   }
   function clearSelection() {
     state.selected.clear();
-    document.querySelectorAll(".card.selected").forEach((n) => n.classList.remove("selected"));
+    document.querySelectorAll(".card.selected").forEach((n) => {
+      n.classList.remove("selected");
+      const box = n.querySelector(".pickBox");
+      if (box) box.checked = false;
+    });
     updateSelectBar();
   }
   function updateSelectBar() {
@@ -311,16 +329,11 @@
     $("clearSel").classList.toggle("hidden", state.selected.size === 0);
   }
   $("clearSel").onclick = clearSelection;
-  $("selectToggle").onclick = () => {
-    state.selectMode = !state.selectMode;
-    $("selectToggle").classList.toggle("on", state.selectMode);
-    if (!state.selectMode) clearSelection();
-  };
-
   const grid = $("grid");
   grid.addEventListener("mousedown", (e) => {
-    if (!state.selectMode || e.target.closest(".card")) return;
+    if (e.target.closest(".card")) return;
     rectStart = { x: e.clientX, y: e.clientY };
+    rectMoved = false;
     const box = $("selectBox");
     box.style.left = e.clientX + "px";
     box.style.top = e.clientY + "px";
@@ -330,6 +343,7 @@
   });
   window.addEventListener("mousemove", (e) => {
     if (!rectStart) return;
+    if (Math.abs(e.clientX - rectStart.x) > 3 || Math.abs(e.clientY - rectStart.y) > 3) rectMoved = true;
     const box = $("selectBox");
     const x = Math.min(e.clientX, rectStart.x);
     const y = Math.min(e.clientY, rectStart.y);
@@ -346,12 +360,23 @@
   });
   window.addEventListener("mouseup", () => {
     if (!rectStart) return;
+    const moved = rectMoved;
     rectStart = null;
+    rectMoved = false;
     $("selectBox").classList.add("hidden");
     document.querySelectorAll(".card.selected").forEach((card) => {
       state.selected.add(Number(card.dataset.id));
+      const box = card.querySelector(".pickBox");
+      if (box) box.checked = true;
     });
     updateSelectBar();
+    if (moved) {
+      suppressClick = true;
+      setTimeout(() => { suppressClick = false; }, 120);
+    }
+  });
+  grid.addEventListener("click", (e) => {
+    if (e.target === grid && !rectMoved) clearSelection();
   });
 
   /* ---------------- drag ---------------- */
@@ -365,6 +390,8 @@
         document.querySelectorAll(".card.selected").forEach((n) => n.classList.remove("selected"));
       }
       node.classList.add("drag");
+      suppressClick = true;
+      setTimeout(() => { suppressClick = false; }, 200);
       e.dataTransfer.effectAllowed = "move";
       try { e.dataTransfer.setData("text/plain", JSON.stringify(dragIds)); } catch (_) {}
     });
@@ -477,6 +504,7 @@
         <span>${folderLink}</span>
         <span>${esc(post.folder || "")}</span>
         <a href="${esc(post.permalink)}" target="_blank" rel="noopener">post URL ↗</a>
+        <button class="btn small" id="openFolder" title="Open in file manager">Open folder</button>
         ${post.vision_caption ? `<span>vision: ${esc(post.vision_caption)}</span>` : ""}
       </div>
     `;
@@ -507,6 +535,19 @@
       setActive();
       const first = items[0];
       if (first && first.tagName === "VIDEO") first.play().catch(() => {});
+    }
+
+    if ($("openFolder")) {
+      $("openFolder").onclick = async () => {
+        $("openFolder").textContent = "Opening…";
+        try {
+          const result = await api(`/api/open_folder/${post.id}`);
+          $("openFolder").textContent = result.ok ? "Opened folder" : "Folder missing";
+        } catch (_) {
+          $("openFolder").textContent = "Could not open";
+        }
+        setTimeout(() => { if ($("openFolder")) $("openFolder").textContent = "Open folder"; }, 2000);
+      };
     }
 
     $("catSelect").onchange = async (e) => {

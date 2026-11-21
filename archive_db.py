@@ -498,6 +498,34 @@ def export_json(conn: sqlite3.Connection, media_root: Path, json_path: Path) -> 
     return len(records)
 
 
+def rescan_media(conn: sqlite3.Connection, media_root: Path) -> int:
+    rows = conn.execute(
+        "SELECT id, media_id, folder, cover FROM posts WHERE folder IS NOT NULL"
+    ).fetchall()
+    count = 0
+    for row in rows:
+        folder = media_root / row["folder"]
+        if not folder.is_dir():
+            continue
+        conn.execute("DELETE FROM post_media WHERE media_id=?", (row["media_id"],))
+        for item in list_media(folder):
+            conn.execute(
+                "INSERT OR REPLACE INTO post_media (media_id, path, kind) VALUES (?,?,?)",
+                (row["media_id"], item["path"], item["type"]),
+            )
+        cover = find_cover(folder)
+        if cover != row["cover"]:
+            conn.execute(
+                "UPDATE posts SET cover=? WHERE id=?", (cover, row["id"])
+            )
+        count += 1
+        if count % 1000 == 0:
+            conn.commit()
+            print(f"  {count} rescanned", flush=True)
+    conn.commit()
+    return count
+
+
 def stats(conn: sqlite3.Connection) -> None:
     total = conn.execute("SELECT COUNT(*) FROM posts").fetchone()[0]
     with_folder = conn.execute(
@@ -537,6 +565,10 @@ def main() -> None:
     p_stats = sub.add_parser("stats")
     p_stats.add_argument("--db", default=argparse.SUPPRESS)
 
+    p_rescan = sub.add_parser("rescan")
+    p_rescan.add_argument("--db", default=argparse.SUPPRESS)
+    p_rescan.add_argument("--media", default="data/posts")
+
     p_export = sub.add_parser("export-json")
     p_export.add_argument("--db", default=argparse.SUPPRESS)
     p_export.add_argument("--json", default="data/saved_posts.json")
@@ -560,6 +592,9 @@ def main() -> None:
         print(f"wrote files for {n} folders")
     elif args.cmd == "stats":
         stats(conn)
+    elif args.cmd == "rescan":
+        n = rescan_media(conn, Path(args.media))
+        print(f"rescanned {n} folders")
     elif args.cmd == "export-json":
         n = export_json(conn, Path(args.media), Path(args.json))
         print(f"exported {n} records to {args.json}")

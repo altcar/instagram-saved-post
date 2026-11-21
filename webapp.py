@@ -103,6 +103,7 @@ class Archive:
             "newest": "p.taken_at DESC, p.id DESC",
             "oldest": "p.taken_at ASC, p.id ASC",
             "likes": "p.likes DESC, p.id DESC",
+            "uncategorised": "(p.category IS NULL OR p.category='') DESC, p.sort_order ASC",
             "random": "RANDOM()",
         }.get(sort, "p.sort_order ASC, p.id ASC")
 
@@ -153,6 +154,7 @@ class Archive:
                     "taken_at": row["taken_at"],
                     "is_video": bool(row["is_video"]),
                     "category": row["category"],
+                    "is_ad": bool(row["is_ad"]) if "is_ad" in row.keys() else False,
                     "confidence": row["category_confidence"],
                     "source": row["category_source"],
                     "tags": (row["tag_list"] or "").split("|") if row["tag_list"] else [],
@@ -176,11 +178,13 @@ class Archive:
             ).fetchall()
             total = conn.execute("SELECT COUNT(*) FROM posts").fetchone()[0]
             videos = conn.execute("SELECT COUNT(*) FROM posts WHERE is_video=1").fetchone()[0]
+            ads = conn.execute("SELECT COUNT(*) FROM posts WHERE is_ad=1").fetchone()[0]
         finally:
             conn.close()
         return {
             "total": total,
             "videos": videos,
+            "ads": ads,
             "categories": [{"name": c["c"], "count": c["n"]} for c in cats],
             "tags": [{"name": t["tag"], "count": t["n"]} for t in tags],
             "presets": CATEGORIES,
@@ -254,6 +258,19 @@ class Archive:
             else:
                 data["comments"] = []
         return data
+
+    def folder_path(self, post_id: int) -> Optional[Path]:
+        conn = self.connect()
+        try:
+            row = conn.execute(
+                "SELECT folder FROM posts WHERE id=?", (post_id,)
+            ).fetchone()
+        finally:
+            conn.close()
+        if not row or not row["folder"]:
+            return None
+        path = self.media_root / row["folder"]
+        return path if path.is_dir() else None
 
     def update_post(self, post_id: int, payload: Dict[str, Any]) -> bool:
         allowed = {"category": "category", "notes": "notes"}
@@ -604,6 +621,19 @@ class Handler(BaseHTTPRequestHandler):
         if match:
             ok = self.archive.update_post(int(match.group(1)), payload)
             self._json(200 if ok else 404, {"ok": ok})
+            return
+
+        match = re.match(r"^/api/open_folder/(\d+)$", parsed.path)
+        if match:
+            folder = self.archive.folder_path(int(match.group(1)))
+            if not folder:
+                self._json(404, {"ok": False, "error": "folder missing"})
+                return
+            try:
+                subprocess.Popen(["xdg-open", str(folder)])
+                self._json(200, {"ok": True, "path": str(folder)})
+            except Exception as exc:
+                self._json(500, {"ok": False, "error": str(exc)})
             return
 
         if parsed.path == "/api/bulk_category":

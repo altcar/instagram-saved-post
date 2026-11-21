@@ -244,3 +244,8 @@ select{background:var(--panel);border:1px solid var(--line);border-radius:11px;
   .socialBar{position:relative;width:100%;height:46px;flex-direction:row;justify-content:center;
     border-right:0;border-bottom:1px solid var(--line);padding:6px 0}
 }
+
+/* selection checkbox in card */
+.ownerRow{display:flex;align-items:center;gap:7px;min-width:0}
+.pickBox{width:14px;height:14px;accent-color:var(--accent);flex:none;cursor:pointer}
+.ownerRow .owner{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

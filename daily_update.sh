@@ -39,6 +39,7 @@ run "$PY" archive_db.py import --db data/archive.db --json data/saved_posts.json
 run "$PY" resort.py --db data/archive.db --raw data/raw/items.jsonl
 run "$PY" archive_db.py export-json --db data/archive.db --json data/saved_posts.json --media data/posts
 run "$PY" audit_media.py --db data/archive.db --posts data/posts --raw data/raw/items.jsonl
+run "$PY" ads_sync.py --db data/archive.db --posts data/posts --raw data/raw/items.jsonl --out data/ads.json
 run "$PY" classify.py fast --db data/archive.db --media data/posts --raw data/raw/items.jsonl
 run "$PY" classify.py clip --db data/archive.db --media data/posts --cache data/.cache --limit 100
 run "$PY" classify.py fuse --db data/archive.db --media data/posts --cache data/.cache
