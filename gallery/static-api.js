@@ -2,7 +2,7 @@
 (() => {
   window.__STATIC = true;
   const nativeFetch = window.fetch.bind(window);
-  const ready = nativeFetch("manifest.json?nc=202611231844", { cache: "no-store" })
+  const ready = nativeFetch("manifest.json?nc=202611232012", { cache: "no-store" })
     .then((r) => r.json())
     .then(async (data) => {
       posts = data.posts || [];
@@ -506,7 +506,7 @@
   }
 
   function sourceItems(source) {
-    if (!source) return posts.slice();
+    if (!source || source === "all" || source === "__all__") return posts.slice();
     return posts.filter((p) => p.source === source || p.platform === source);
   }
 
@@ -603,7 +603,7 @@
   function filtered(params) {
     let items = posts.slice();
     const source = currentSource(params);
-    if (source) {
+    if (source && source !== "all" && source !== "__all__") {
       items = items.filter((p) => p.source === source || p.platform === source);
     }
     const q = (params.get("q") || "").toLowerCase();

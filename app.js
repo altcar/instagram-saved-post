@@ -100,7 +100,8 @@
     accountSelect.className = "hubSelect";
     accountSelect.title = "Switch account";
     $("hubActions").prepend(accountSelect);
-    accountSelect.onchange = () => applySource(accountSelect.value);
+    accountSelect.onchange = () => applySource(
+      accountSelect.value === "__all__" ? "all" : accountSelect.value);
   }
 
   applySource(source);
@@ -112,12 +113,18 @@
         const options = data.accounts.filter((a) =>
           String(a.platform || "").toLowerCase() === platform);
         if (!options.length) { accountSelect.classList.add("hidden"); return; }
-        accountSelect.innerHTML = options.map((a) => `
+        const combinedTotal = options.reduce(
+          (sum, a) => sum + (Number(a.total) || 0), 0);
+        const allOption = options.length > 1
+          ? `<option value="__all__">All accounts · ${combinedTotal.toLocaleString()}</option>`
+          : "";
+        accountSelect.innerHTML = allOption + options.map((a) => `
           <option value="${String(a.id).replace(/"/g, "&quot;")}">
             ${a.label || a.id}${a.total != null ? " · " + Number(a.total).toLocaleString() : ""}
           </option>`).join("");
-        if (!options.some((a) => a.id === source)) source = options[0].id;
-        accountSelect.value = source;
+        const isAll = source === "all" && allOption;
+        if (!isAll && !options.some((a) => a.id === source)) source = options[0].id;
+        accountSelect.value = isAll ? "__all__" : source;
         applySource(source);
       })
       .catch(() => { accountSelect.classList.add("hidden"); });

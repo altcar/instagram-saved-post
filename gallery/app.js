@@ -213,7 +213,7 @@
       state.accounts = Array.isArray(doc.accounts) ? doc.accounts : [];
       state.services = [];
       state.hubBase = "";
-      if (!state.accounts.some((a) => a.id === state.source)) {
+      if (state.source !== "all" && !state.accounts.some((a) => a.id === state.source)) {
         const aliases = { twitter: "x", instagram: "shalevfrfr" };
         const alias = aliases[state.source];
         const match = alias && state.accounts.find((a) => a.id === alias);
@@ -228,7 +228,7 @@
       state.accounts = data.accounts || [];
       state.services = data.services || [];
       state.hubBase = data.hub || "";
-      if (!state.accounts.some((a) => a.id === state.source)) {
+      if (state.source !== "all" && !state.accounts.some((a) => a.id === state.source)) {
         const wanted = isRednotePath
           ? state.accounts.find((a) => String(a.platform).toLowerCase() === "rednote")
           : state.accounts.find((a) => String(a.platform).toLowerCase() === "instagram");
