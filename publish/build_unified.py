@@ -24,7 +24,7 @@ SITE = ROOT / "publish/site-unified"
 SRC = ROOT / "publish/site-test"
 MANIFESTS = ROOT / "publish/manifests"
 GIST_ID = "5dc24371e7371776648695269b30cfd2"
-ASSET_VERSION = 56
+ASSET_VERSION = 57
 
 # Gallery source id -> (platform, hub route, label, subtitle, id base)
 PLATFORMS = [

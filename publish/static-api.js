@@ -777,6 +777,7 @@
       <div id="cloudPanelState"></div>
       <div style="display:flex;gap:6px;margin-top:10px">
         <button id="cloudNow" style="flex:1;padding:6px 8px;border-radius:8px;border:1px solid #2b364b;background:#1b2333;color:#e9edf6;cursor:pointer">Sync now</button>
+        <button id="cloudPull" style="flex:1;padding:6px 8px;border-radius:8px;border:1px solid #2b364b;background:#1b2333;color:#e9edf6;cursor:pointer">Pull</button>
         <button id="cloudConfig" style="flex:1;padding:6px 8px;border-radius:8px;border:1px solid #2b364b;background:#1b2333;color:#e9edf6;cursor:pointer">Configure…</button>
         <button id="cloudClose" style="padding:6px 8px;border-radius:8px;border:1px solid #2b364b;background:#1b2333;color:#e9edf6;cursor:pointer">✕</button>
       </div>
@@ -786,6 +787,13 @@
     document.getElementById("cloudNow").onclick = async () => {
       await pushCloud(true);
       refreshSyncPanel();
+    };
+    document.getElementById("cloudPull").onclick = async () => {
+      await nativeFetch("/api/cloud", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ op: "pull" }),
+      }).catch(() => {});
+      location.reload();
     };
     document.getElementById("cloudConfig").onclick = configureSync;
     document.getElementById("cloudClose").onclick = () => panel.remove();
