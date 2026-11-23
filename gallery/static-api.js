@@ -2,7 +2,7 @@
 (() => {
   window.__STATIC = true;
   const nativeFetch = window.fetch.bind(window);
-  const ready = nativeFetch("manifest.json?nc=202611232016", { cache: "no-store" })
+  const ready = nativeFetch("manifest.json?nc=202611232019", { cache: "no-store" })
     .then((r) => r.json())
     .then(async (data) => {
       posts = data.posts || [];
@@ -505,8 +505,17 @@
     return post.folder || post.pk || String(post.id);
   }
 
-  function sourceItems(source) {
-    if (!source || source === "all" || source === "__all__") return posts.slice();
+  function currentPlatform(params) {
+    return String((params && params.get("platform"))
+      || new URLSearchParams(location.search).get("platform") || "").toLowerCase();
+  }
+
+  function sourceItems(source, platform) {
+    if (!source || source === "all" || source === "__all__") {
+      return platform
+        ? posts.filter((p) => String(p.platform || "").toLowerCase() === platform)
+        : posts.slice();
+    }
     return posts.filter((p) => p.source === source || p.platform === source);
   }
 
@@ -564,8 +573,8 @@
     };
   }
 
-  function facetsFor(source) {
-    const items = sourceItems(source);
+  function facetsFor(source, platform) {
+    const items = sourceItems(source, platform);
     const counts = categoryCounts(items);
     const names = registry();
     const catList = names.map((name) => ({ name, count: counts[name] || 0 }));
@@ -603,8 +612,12 @@
   function filtered(params) {
     let items = posts.slice();
     const source = currentSource(params);
+    const platform = currentPlatform(params);
     if (source && source !== "all" && source !== "__all__") {
       items = items.filter((p) => p.source === source || p.platform === source);
+    } else if (platform) {
+      items = items.filter(
+        (p) => String(p.platform || "").toLowerCase() === platform);
     }
     const q = (params.get("q") || "").toLowerCase();
     const category = params.get("category") || "";
@@ -896,7 +909,7 @@
       }], active: "instagram-static" });
     }
     if (api === "facets") {
-      return json(facetsFor(currentSource(url.searchParams)));
+      return json(facetsFor(currentSource(url.searchParams), currentPlatform(url.searchParams)));
     }
     if (api === "categories") {
       const src = currentSource(url.searchParams);
@@ -938,10 +951,10 @@
         }
         saveRegistry(names);
         localStorage.setItem(STORE, JSON.stringify(overrides));
-        return json({ categories: facetsFor(src).category_list,
-          uncategorised: facetsFor(src).filter_counts.uncategorised });
+        return json({ categories: facetsFor(src, currentPlatform(url.searchParams)).category_list,
+          uncategorised: facetsFor(src, currentPlatform(url.searchParams)).filter_counts.uncategorised });
       }
-      const f = facetsFor(currentSource(url.searchParams));
+      const f = facetsFor(currentSource(url.searchParams), currentPlatform(url.searchParams));
       return json({ categories: f.category_list, uncategorised: f.filter_counts.uncategorised });
     }
     if (api === "cloud") {

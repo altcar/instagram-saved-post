@@ -81,7 +81,10 @@
     if (!src) return base;
     if (!platform) return base;
     const sep = base.includes("?") ? "&" : "?";
-    return `${base}${sep}source=${encodeURIComponent(src)}`;
+    // The combined view must stay inside this platform, so it is passed
+    // through explicitly; per-account sources already imply it.
+    const extra = src === "all" ? `&platform=${encodeURIComponent(platform)}` : "";
+    return `${base}${sep}source=${encodeURIComponent(src)}${extra}`;
   }
 
   function applySource(src) {

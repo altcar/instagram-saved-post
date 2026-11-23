@@ -243,7 +243,9 @@
 
   function paintSourceLabels() {
     const account = state.account || {};
-    const label = account.label || platformName(account.platform);
+    const label = state.source === "all"
+      ? "All accounts"
+      : (account.label || platformName(account.platform));
     const name = $("sourceName");
     if (name) {
       name.textContent = [label, account.handle ? "@" + account.handle : ""]
