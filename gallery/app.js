@@ -9,12 +9,16 @@
 
   const state = {
     source: params.get("source") || (isRednotePath ? "rednote-main" : "instagram-main"),
-    q: "", category: "", tag: "", owner: "", sort: "manual", view: "grid",
+    q: "", category: "", tagStates: new Map(), owner: "", sort: "manual", view: "grid",
     filters: new Set(), onlyCats: new Set(),
     offset: 0, limit: 60, total: 0, items: [], loading: false, done: false,
     selected: new Set(),
     accounts: [], account: null, services: [], hubBase: "",
   };
+  // Personal-tag chips cycle: off -> include -> exclude -> off.
+  const tagMode = (name) => state.tagStates.get(name) || "off";
+  const activeTags = (mode) =>
+    [...state.tagStates].filter(([, m]) => m === mode).map(([name]) => name);
   let dragIds = null;
   let saveTimer = null;
   let searchTimer = null;
@@ -312,7 +316,7 @@
       el.onclick = (e) => {
         if (e.target.closest(".catTools")) return;
         state.category = state.category === el.dataset.cat ? "" : el.dataset.cat;
-        state.tag = "";
+        state.tagStates.clear();
         reset();
         loadFacets();
       };
@@ -335,17 +339,25 @@
       });
     });
 
-    $("tags").innerHTML = f.tags.map((t) => `
-      <span class="tag ${state.tag === t.name ? "on" : ""}" data-tag="${esc(t.name)}">#${esc(t.name)} <b>${fmtNum(t.count)}</b></span>
-    `).join("") || '<span class="hint">No personal tags yet.</span>';
+    $("tags").innerHTML = f.tags.map((t) => {
+      const mode = tagMode(t.name);
+      return `
+      <span class="tag ${mode === "in" ? "on" : mode === "out" ? "out" : ""}"
+        data-tag="${esc(t.name)}" data-mode="${mode}"
+        role="button" aria-pressed="${mode !== "off"}"
+        title="Filter by #${esc(t.name)}: click to include, click again to exclude, click again to clear">#${esc(t.name)} <b>${fmtNum(t.count)}</b></span>`;
+    }).join("") || '<span class="hint">No personal tags yet.</span>';
     $("tags").querySelectorAll(".tag").forEach((el) => {
       el.onclick = () => {
-        state.tag = state.tag === el.dataset.tag ? "" : el.dataset.tag;
+        const mode = tagMode(el.dataset.tag);
+        if (mode === "off") state.tagStates.set(el.dataset.tag, "in");
+        else if (mode === "in") state.tagStates.set(el.dataset.tag, "out");
+        else state.tagStates.delete(el.dataset.tag);
         reset();
         loadFacets();
       };
     });
-    $("clearTag").classList.toggle("hidden", !state.tag);
+    $("clearTag").classList.toggle("hidden", !state.tagStates.size);
     $("clearSel").classList.toggle("hidden", !state.selected.size);
   }
 
@@ -472,7 +484,12 @@
     state.loading = true;
     const query = new URLSearchParams({
       offset: state.offset, limit: state.limit, q: state.q,
-      category: state.category, tag: state.tag, sort: state.sort, owner: state.owner,
+      category: state.category,
+      // Multiple chips compose: includes are ANDed, excludes are ANDed.
+      // Each tag has a single state, so exclude always wins for one tag.
+      tag: activeTags("in").join(","),
+      ntag: activeTags("out").join(","),
+      sort: state.sort, owner: state.owner,
       flags: [...state.filters].join(","),
       categories: [...state.onlyCats].join(","),
     });
@@ -1713,7 +1730,7 @@
     }, 300);
   });
   $("sort").addEventListener("change", (e) => { state.sort = e.target.value; reset(); });
-  $("clearTag").onclick = () => { state.tag = ""; reset(); loadFacets(); };
+  $("clearTag").onclick = () => { state.tagStates.clear(); reset(); loadFacets(); };
   $("views").querySelectorAll("button").forEach((btn) => {
     btn.onclick = () => {
       state.view = btn.dataset.view;
