@@ -17,8 +17,11 @@ fi
 
 rsync -a --delete --exclude='.git' publish/site-unified/ "$DEPLOY"/
 cd "$DEPLOY"
+git fetch origin gh-pages || true
 git add -A
 git -c user.name=altcar -c user.email=altcar@users.noreply.github.com \
   commit -q -m "Deploy unified Saved Archive gallery" || true
-git push origin gh-pages
+# The Hugging Face uploader may force-push an orphan gh-pages commit while an
+# upload finishes.  The freshly built tree is authoritative, so replace it.
+git push --force origin gh-pages
 echo "published https://altcar.github.io/instagram-saved-post/"

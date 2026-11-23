@@ -55,6 +55,8 @@
     lastError: "",
     inFlight: false,
     lastOk: "",
+    d1Sig: localStorage.getItem("ig_sync_d1_sig") || "",
+    gistSig: localStorage.getItem("ig_sync_gist_sig") || "",
   };
   let syncTimer = null;
   let db = null;
@@ -64,6 +66,8 @@
     localStorage.setItem("ig_sync_rev", String(sync.rev));
     localStorage.setItem("ig_sync_d1_rev", String(sync.d1Rev));
     localStorage.setItem("ig_sync_gist_rev", String(sync.gistRev));
+    localStorage.setItem("ig_sync_d1_sig", sync.d1Sig || "");
+    localStorage.setItem("ig_sync_gist_sig", sync.gistSig || "");
     localStorage.setItem(SYNC_TIME_KEY, JSON.stringify({
       lastD1: sync.lastD1, lastGist: sync.lastGist,
       nextD1: sync.nextD1, nextGist: sync.nextGist,
@@ -279,9 +283,13 @@
           if (direct) {
             try { remote = JSON.parse(direct); } catch (_) {}
           }
-          if (!remote && files["cloud_state.json"] && files["cloud_state.json"].content) {
+          // The browser export (cloud_state.json) holds the full personal
+          // history keyed by media id.  Merge anything that matches a post in
+          // the unified manifest, even when static_overrides.json exists.
+          if (files["cloud_state.json"] && files["cloud_state.json"].content) {
             try {
-              remote = stateToOverrides(JSON.parse(files["cloud_state.json"].content));
+              const mapped = stateToOverrides(JSON.parse(files["cloud_state.json"].content));
+              remote = remote ? mergeDocs(remote, mapped) : mapped;
             } catch (_) {}
           }
           if (remote) {
@@ -350,6 +358,7 @@
     sync.d1Rev = Math.max(sync.d1Rev, revAtSend);
     sync.lastD1 = Date.now();
     sync.nextD1 = 0;
+    saveSyncState();
     sync.lastError = "";
     saveSyncState();
   }
@@ -402,15 +411,26 @@
     sync.inFlight = true;
     paintSyncButton();
     const revAtSend = sync.rev;
+    const sig = docHash();
     let firstErr = null;
     try {
       if (d1Due) {
-        try { await pushD1(revAtSend, keepalive); }
-        catch (err) { firstErr = err; }
+        if (sig === sync.d1Sig) {
+          sync.d1Rev = Math.max(sync.d1Rev, revAtSend);
+          sync.lastD1 = Date.now();
+        } else {
+          try { await pushD1(revAtSend, keepalive); sync.d1Sig = sig; }
+          catch (err) { firstErr = err; }
+        }
       }
       if (gistDue) {
-        try { await pushGist(revAtSend, keepalive); }
-        catch (err) { firstErr = firstErr || err; }
+        if (sig === sync.gistSig) {
+          sync.gistRev = Math.max(sync.gistRev, revAtSend);
+          sync.lastGist = Date.now();
+        } else {
+          try { await pushGist(revAtSend, keepalive); sync.gistSig = sig; }
+          catch (err) { firstErr = firstErr || err; }
+        }
       }
       if (firstErr) syncError(firstErr);
       else syncOk();
@@ -435,8 +455,12 @@
   }
 
   function saveOverride(post, patch) {
+    const prev = overrides[post.id] || {};
+    const changed = Object.keys(patch)
+      .some((key) => !sameValue(prev[key], patch[key]));
+    if (!changed) return;  // a blur with the same text must not create a write
     overrides[post.id] = {
-      ...(overrides[post.id] || {}),
+      ...prev,
       ...patch,
       t: Date.now(),
     };
@@ -448,6 +472,28 @@
     JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 
   const cats = (item) => item.categories || (item.category ? [item.category] : []);
+
+  function sameValue(a, b) {
+    if (a === b) return true;
+    try { return JSON.stringify(a) === JSON.stringify(b); } catch (_) { return false; }
+  }
+
+  function docHash() {
+    const doc = syncDoc();
+    delete doc.updated_at;
+    const ov = {};
+    Object.keys(doc.overrides || {}).sort().forEach((k) => {
+      ov[k] = doc.overrides[k];
+    });
+    doc.overrides = ov;
+    const text = JSON.stringify(doc);
+    let h = 2166136261;
+    for (let i = 0; i < text.length; i += 1) {
+      h ^= text.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return String(text.length) + ":" + (h >>> 0).toString(36);
+  }
 
   function postKey(post) {
     return post.folder || post.pk || String(post.id);
@@ -471,8 +517,11 @@
   }
 
   function saveRegistry(names) {
-    overrides.__category_order = names.filter(Boolean);
-    overrides.__categories = names.filter(Boolean);
+    const next = names.filter(Boolean);
+    const prev = overrides.__category_order || overrides.__categories || [];
+    if (next.length === prev.length && next.every((c, i) => c === prev[i])) return;
+    overrides.__category_order = next;
+    overrides.__categories = next;
     overrides.__cat_t = Date.now();
     localStorage.setItem(STORE, JSON.stringify(overrides));
     markDirty();
@@ -986,6 +1035,7 @@
         (payload.ids || []).forEach((id) => {
           const post = posts.find((p) => p.id === Number(id));
           if (!post || !category) return;
+          if (cats(post).includes(category)) return;
           post.categories = [...new Set([...cats(post), category])];
           post.category = post.categories[0] || null;
           saveOverride(post, { categories: post.categories });
