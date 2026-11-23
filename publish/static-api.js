@@ -213,12 +213,18 @@
         const post = byKey[key];
         if (!post) return;
         const patch = {};
-        if (Array.isArray(assign[key])) patch.categories = assign[key];
-        if (typeof notes[key] === "string") patch.notes = notes[key];
-        if (Array.isArray(tags[key])) patch.tags = tags[key];
+        if (Array.isArray(assign[key]) && assign[key].length) {
+          patch.categories = assign[key];
+        }
+        if (typeof notes[key] === "string" && notes[key]) patch.notes = notes[key];
+        if (Array.isArray(tags[key]) && tags[key].length) patch.tags = tags[key];
         if (meta[key]) {
-          if (typeof meta[key].notes === "string") patch.notes = meta[key].notes;
-          if (Array.isArray(meta[key].tags)) patch.tags = meta[key].tags;
+          if (typeof meta[key].notes === "string" && meta[key].notes) {
+            patch.notes = meta[key].notes;
+          }
+          if (Array.isArray(meta[key].tags) && meta[key].tags.length) {
+            patch.tags = meta[key].tags;
+          }
         }
         if (Object.keys(patch).length) {
           out.overrides[post.id] = { ...(out.overrides[post.id] || {}), ...patch };
@@ -895,7 +901,9 @@
         const updatePosts = (fn) => {
           posts.forEach((p) => {
             if (!src || p.source === src || p.platform === src) {
-              const next = fn(cats(p));
+              const before = cats(p);
+              const next = fn(before);
+              if (sameValue(before, next)) return;  // leave untouched posts alone
               p.categories = next;
               p.category = next[0] || null;
               overrides[p.id] = { ...(overrides[p.id] || {}), categories: next,
