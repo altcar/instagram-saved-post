@@ -1,0 +1,45 @@
+{
+  "accounts": [
+    {
+      "id": "shalevfrfr",
+      "platform": "instagram",
+      "label": "Instagram · shalevfrfr",
+      "handle": "",
+      "total": 5,
+      "videos": 5
+    },
+    {
+      "id": "threads",
+      "platform": "threads",
+      "label": "Threads",
+      "handle": "",
+      "total": 174,
+      "videos": 57
+    },
+    {
+      "id": "x",
+      "platform": "x",
+      "label": "X / Twitter",
+      "handle": "",
+      "total": 48,
+      "videos": 13
+    },
+    {
+      "id": "rednote",
+      "platform": "rednote",
+      "label": "RedNote",
+      "handle": "",
+      "total": 254,
+      "videos": 140
+    },
+    {
+      "id": "reddit",
+      "platform": "reddit",
+      "label": "Reddit",
+      "handle": "",
+      "total": 2,
+      "videos": 1
+    }
+  ],
+  "active": "shalevfrfr"
+}
