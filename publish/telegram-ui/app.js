@@ -222,6 +222,9 @@ async function boot() {
   const localParam = new URLSearchParams(location.search).get('local');
   const forceLocal = localParam === '1' || (TG_LOCAL_ONLY && localParam !== '0');
   if (forceLocal || navigator.onLine === false) {
+    $('#chatList').innerHTML =
+      '<div class="side-loading">Waiting for the local archive server…</div>';
+    $('#headerSub').textContent = 'Allow local network access if Chrome asks';
     if (await loadLocalArchives()) return;
     if (TG_LOCAL_ONLY) {
       showLocalServerHelp();
