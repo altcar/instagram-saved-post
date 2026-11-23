@@ -8,6 +8,7 @@
     { id: "threads", label: "Threads", icon: "threads" },
     { id: "twitter", label: "X / Twitter", icon: "twitter" },
     { id: "reddit", label: "Reddit", icon: "reddit" },
+    { id: "telegram", label: "Telegram", icon: "telegram" },
   ];
 
   const icon = (name) => {

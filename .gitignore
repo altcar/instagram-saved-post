@@ -54,3 +54,5 @@ publish/.deploy-pages/
 publish/static_overrides.json
 
 publish/site-unified/
+
+publish/worker/.archive-key

@@ -1,0 +1,8 @@
+{
+  "name": "ig-archive-state",
+  "main": "worker.js",
+  "compatibility_date": "2026-01-01",
+  "d1_databases": [
+    { "binding": "DB", "database_name": "notes-db", "database_id": "8113d549-1924-44a2-90c8-58aab96366e5" }
+  ]
+}

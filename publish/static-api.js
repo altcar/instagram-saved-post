@@ -17,11 +17,176 @@
   const GIST_FILE = CLOUD.gistFile || "static_overrides.json";
   let cloudToken = localStorage.getItem("ig_cloud_token") || CLOUD.token || "";
   let d1Url = localStorage.getItem("ig_cloud_d1") || CLOUD.d1Url || "";
-  let cloudTimer = null;
+  let d1Key = localStorage.getItem("ig_cloud_d1_key") || "";
   let overrides = {};
   try { overrides = JSON.parse(localStorage.getItem(STORE) || "{}"); } catch (_) {}
+
+  // ---- write-behind sync -------------------------------------------------
+  // Local storage is always written first, so the UI never waits on a network
+  // round trip.  Cloud writes are coalesced and rate limited: D1 at most once
+  // per 30s, the gist at most once per 5 minutes (one commit per write), plus
+  // one urgent flush when the tab is hidden.  A change made while typing is
+  // therefore at most one write, no matter how many keystrokes it took.
+  const SYNC = {
+    idle: 5000,        // save 5s after the last edit
+    min: 30000,        // never more than one D1 write per 30s
+    max: 120000,       // a continuous editor still gets a write every 2 min
+    gistMin: 300000,   // one gist commit per 5 min (max 288/day)
+    gistHideMin: 15000,// urgent flush on tab hide needs 15s since last gist
+    retryMin: 30000,
+    retryMax: 1800000, // cap backoff at 30 min after an error/rate limit
+  };
+  const SYNC_TIME_KEY = "ig_sync_times_v1";
+  const GIST_CACHE_KEY = "ig_gist_cache_v1";
+  const GIST_CACHE_MS = 300000;   // read the gist at most once per 5 min
+  let savedTimes = {};
+  try { savedTimes = JSON.parse(localStorage.getItem(SYNC_TIME_KEY) || "{}"); } catch (_) {}
+  const sync = {
+    rev: Number(localStorage.getItem("ig_sync_rev") || 0),
+    d1Rev: Number(localStorage.getItem("ig_sync_d1_rev") || 0),
+    gistRev: Number(localStorage.getItem("ig_sync_gist_rev") || 0),
+    firstDirty: 0,
+    lastEdit: 0,
+    lastD1: Number(savedTimes.lastD1 || 0),
+    lastGist: Number(savedTimes.lastGist || 0),
+    nextD1: Number(savedTimes.nextD1 || 0),
+    nextGist: Number(savedTimes.nextGist || 0),
+    backoff: SYNC.retryMin,
+    lastError: "",
+    inFlight: false,
+    lastOk: "",
+  };
+  let syncTimer = null;
   let db = null;
   let posts = [];
+
+  function saveSyncState() {
+    localStorage.setItem("ig_sync_rev", String(sync.rev));
+    localStorage.setItem("ig_sync_d1_rev", String(sync.d1Rev));
+    localStorage.setItem("ig_sync_gist_rev", String(sync.gistRev));
+    localStorage.setItem(SYNC_TIME_KEY, JSON.stringify({
+      lastD1: sync.lastD1, lastGist: sync.lastGist,
+      nextD1: sync.nextD1, nextGist: sync.nextGist,
+    }));
+  }
+
+  function markDirty() {
+    sync.rev += 1;
+    sync.lastEdit = Date.now();
+    if (!sync.firstDirty) sync.firstDirty = sync.lastEdit;
+    saveSyncState();
+    scheduleFlush();
+    paintSyncButton();
+  }
+
+  function targetPending() {
+    const pendingD1 = !!d1Url && sync.rev > sync.d1Rev;
+    const pendingGist = !!cloudToken && !!GIST_ID && sync.rev > sync.gistRev;
+    return { pendingD1, pendingGist };
+  }
+
+  function scheduleFlush() {
+    if (syncTimer) clearTimeout(syncTimer);
+    syncTimer = null;
+    const now = Date.now();
+    const { pendingD1, pendingGist } = targetPending();
+    if (!pendingD1 && !pendingGist) { sync.firstDirty = 0; return; }
+    const lastCloud = Math.max(sync.lastD1, sync.lastGist);
+    const idleWait = Math.max(0, SYNC.idle - (now - sync.lastEdit));
+    const forceWait = Math.max(0, SYNC.max - (now - (sync.firstDirty || now)));
+    const waits = [Math.min(idleWait, forceWait)];
+    if (pendingD1) {
+      waits.push(Math.max(0, sync.nextD1 - now,
+        SYNC.min - (now - lastCloud)));
+    }
+    if (pendingGist) {
+      waits.push(Math.max(0, sync.nextGist - now,
+        SYNC.gistMin - (now - sync.lastGist)));
+    }
+    const wait = Math.max(0, Math.max(...waits));
+    syncTimer = setTimeout(() => { syncTimer = null; pushCloud(false); }, wait);
+  }
+
+  function headerValue(res, name) {
+    try { return res.headers.get(name) || ""; } catch (_) { return ""; }
+  }
+
+  function parseRetry(res) {
+    const after = headerValue(res, "Retry-After");
+    if (after) {
+      const secs = Number(after);
+      if (Number.isFinite(secs)) return Date.now() + Math.max(1, secs) * 1000;
+      const at = Date.parse(after);
+      if (Number.isFinite(at)) return at;
+    }
+    const reset = headerValue(res, "X-RateLimit-Reset");
+    if (reset) {
+      const at = Number(reset) * 1000;
+      if (Number.isFinite(at) && at > Date.now()) return at;
+    }
+    return 0;
+  }
+
+  function syncBackoff(until, provider) {
+    const base = until || (Date.now() + sync.backoff);
+    const at = Math.min(base, Date.now() + SYNC.retryMax);
+    if (provider === "d1") sync.nextD1 = at;
+    else if (provider === "gist") sync.nextGist = at;
+    else { sync.nextD1 = at; sync.nextGist = at; }
+    sync.backoff = Math.min(sync.backoff * 2, SYNC.retryMax);
+    saveSyncState();
+  }
+
+  function syncOk() {
+    sync.backoff = SYNC.retryMin;
+    sync.lastError = "";
+    sync.lastOk = new Date().toISOString();
+    saveSyncState();
+    paintSyncButton();
+    refreshSyncPanel();
+  }
+
+  function syncError(err) {
+    sync.lastError = String(err && err.message || err || "sync failed");
+    paintSyncButton();
+    refreshSyncPanel();
+  }
+
+  function mergeDocs(left, right) {
+    const a = left || {};
+    const b = right || {};
+    const ao = a.overrides || {};
+    const bo = b.overrides || {};
+    const merged = {};
+    const keys = new Set([...Object.keys(ao), ...Object.keys(bo)]);
+    keys.forEach((key) => {
+      if (key.startsWith("__")) return;
+      const x = ao[key];
+      const y = bo[key];
+      if (!x) { merged[key] = y; return; }
+      if (!y) { merged[key] = x; return; }
+      const tx = Number(x.t || 0);
+      const ty = Number(y.t || 0);
+      merged[key] = ty > tx ? { ...x, ...y } : { ...y, ...x };
+    });
+    const at = Number(a.__cat_t || 0);
+    const bt = Number(b.__cat_t || 0);
+    let order;
+    if (at > bt) order = a.__category_order || a.__categories || [];
+    else if (bt > at) order = b.__category_order || b.__categories || [];
+    else {
+      order = [...(a.__category_order || a.__categories || [])];
+      (b.__category_order || b.__categories || []).forEach((c) => {
+        if (!order.includes(c)) order.push(c);
+      });
+    }
+    const out = { ...a, ...b, overrides: merged };
+    out.__categories = order.filter(Boolean);
+    out.__category_order = out.__categories;
+    out.__cat_t = Math.max(at, bt);
+    out.__updated_at = new Date().toISOString();
+    return out;
+  }
 
   function stateToOverrides(state) {
     const out = { overrides: {}, categories: [] };
@@ -59,84 +224,203 @@
     return out;
   }
 
-  async function loadCloud() {
+  async function loadCloud(force) {
+    let doc = { ...overrides };
     let localDoc = null;
     try {
       const local = await nativeFetch(`static_overrides.json?nc=${Date.now()}`,
         { cache: "no-store" });
       if (local.ok) localDoc = await local.json();
     } catch (_) {}
-    const browserLocal = { ...overrides };
-    if (localDoc && localDoc.overrides) {
-      overrides = { ...localDoc.overrides, ...overrides };
+    if (localDoc) doc = mergeDocs(localDoc, doc);
+    if (doc.__categories) {
+      doc.__categories = doc.__categories || doc.__category_order || [];
+      doc.__category_order = doc.__category_order || doc.__categories;
     }
-    if (localDoc && Array.isArray(localDoc.categories)) {
-      const merged = Array.isArray(overrides.__categories) ? overrides.__categories.slice() : [];
-      localDoc.categories.forEach((c) => { if (!merged.includes(c)) merged.push(c); });
-      overrides.__categories = merged;
-      overrides.__category_order = merged;
+
+    // D1 is the fast primary. One read per page load is cheap and keeps
+    // different devices in sync even when the gist is rate limited.
+    if (d1Url) {
+      try {
+        const headers = d1Key ? { "X-Archive-Key": d1Key } : {};
+        const res = await nativeFetch(`${d1Url}${d1Url.includes("?") ? "&" : "?"}id=default`,
+          { headers, cache: "no-store" });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.doc) doc = mergeDocs(doc, data.doc);
+        }
+      } catch (_) {}
     }
+
     if (!GIST_ID) {
+      overrides = doc.overrides || {};
+      overrides.__categories = doc.__categories || [];
+      overrides.__category_order = overrides.__categories;
       localStorage.setItem(STORE, JSON.stringify(overrides));
       return;
     }
-    try {
-      const headers = cloudToken ? { Authorization: `Bearer ${cloudToken}` } : {};
-      const res = await nativeFetch(`https://api.github.com/gists/${GIST_ID}?t=${Date.now()}`, {
-        headers, cache: "no-store" });
-      if (!res.ok) return;
-      const gist = await res.json();
-      const files = gist.files || {};
-      let remote = null;
-      const direct = files[GIST_FILE] && files[GIST_FILE].content;
-      if (direct) {
-        try { remote = JSON.parse(direct); } catch (_) {}
+
+    // Gist read cache: anonymous callers only get 60 requests/hour.
+    let remote = null;
+    let cached = null;
+    try { cached = JSON.parse(localStorage.getItem(GIST_CACHE_KEY) || "null"); } catch (_) {}
+    const fresh = cached && Date.now() - Number(cached.at || 0) < GIST_CACHE_MS;
+    if (!force && fresh) {
+      remote = cached.doc;
+    } else {
+      try {
+        const headers = cloudToken ? { Authorization: `Bearer ${cloudToken}` } : {};
+        const res = await nativeFetch(`https://api.github.com/gists/${GIST_ID}?t=${Date.now()}`, {
+          headers, cache: "no-store" });
+        if (res.ok) {
+          const gist = await res.json();
+          const files = gist.files || {};
+          const direct = files[GIST_FILE] && files[GIST_FILE].content;
+          if (direct) {
+            try { remote = JSON.parse(direct); } catch (_) {}
+          }
+          if (!remote && files["cloud_state.json"] && files["cloud_state.json"].content) {
+            try {
+              remote = stateToOverrides(JSON.parse(files["cloud_state.json"].content));
+            } catch (_) {}
+          }
+          if (remote) {
+            localStorage.setItem(GIST_CACHE_KEY, JSON.stringify({
+              at: Date.now(), doc: remote,
+            }));
+          }
+        } else if (cached && res.status === 403) {
+          remote = cached.doc;  // anonymous rate limit: use the last copy
+        }
+      } catch (_) {
+        if (cached) remote = cached.doc;
       }
-      if (!remote && files["cloud_state.json"] && files["cloud_state.json"].content) {
-        try {
-          remote = stateToOverrides(JSON.parse(files["cloud_state.json"].content));
-        } catch (_) {}
-      }
-      if (!remote) return;
-      if (remote.overrides) {
-        overrides = { ...overrides, ...remote.overrides, ...browserLocal };
-      }
-      if (Array.isArray(remote.categories)) {
-        const merged = Array.isArray(overrides.__categories) ? overrides.__categories.slice() : [];
-        remote.categories.forEach((c) => { if (!merged.includes(c)) merged.push(c); });
-        overrides.__categories = merged;
-        overrides.__category_order = merged;
-      }
-      localStorage.setItem(STORE, JSON.stringify(overrides));
-    } catch (_) {
-      localStorage.setItem(STORE, JSON.stringify(overrides));
     }
+    if (remote) doc = mergeDocs(doc, remote);
+    overrides = doc.overrides || {};
+    overrides.__categories = doc.__categories || [];
+    overrides.__category_order = overrides.__category_order || overrides.__categories;
+    overrides.__cat_t = doc.__cat_t || overrides.__cat_t || 0;
+    localStorage.setItem(STORE, JSON.stringify(overrides));
   }
 
-  function pushCloud() {
-    const body = JSON.stringify({ overrides, updated_at: new Date().toISOString() });
-    if (GIST_ID && cloudToken) {
-      nativeFetch(`https://api.github.com/gists/${GIST_ID}`, {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${cloudToken}`,
-          Accept: "application/vnd.github+json",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ files: { [GIST_FILE]: { content: body } } }),
-      }).catch(() => {});
-      localStorage.setItem("ig_cloud_last_push", new Date().toISOString());
-      return;
+  function syncDoc() {
+    return {
+      overrides,
+      __categories: overrides.__categories || overrides.__category_order || [],
+      __category_order: overrides.__category_order || overrides.__categories || [],
+      __cat_t: overrides.__cat_t || 0,
+      updated_at: new Date().toISOString(),
+    };
+  }
+
+  async function pushD1(revAtSend, keepalive) {
+    const res = await nativeFetch(d1Url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(d1Key ? { "X-Archive-Key": d1Key } : {}),
+      },
+      body: JSON.stringify({ doc: syncDoc(), rev: revAtSend }),
+      keepalive: !!keepalive,
+    });
+    if (!res.ok) {
+      const retryAt = parseRetry(res);
+      if (res.status === 401 || res.status === 403) {
+        syncBackoff(retryAt || Date.now() + 15 * 60 * 1000, "d1");
+        throw new Error(res.status === 401 ? "D1 key rejected" : "D1 write forbidden");
+      }
+      if (res.status === 429 || res.status >= 500) {
+        syncBackoff(retryAt || 0, "d1");
+        throw new Error(`D1 temporarily unavailable (${res.status})`);
+      }
+      throw new Error(`D1 write failed (${res.status})`);
     }
-    if (d1Url) {
-      nativeFetch(d1Url, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ overrides }),
-      }).catch(() => {});
-      localStorage.setItem("ig_cloud_last_push", new Date().toISOString());
-      return;
+    const data = await res.json().catch(() => null);
+    if (data && data.doc && data.doc.overrides) {
+      // The Worker merges by per-post timestamp, so adopt anything newer than
+      // what this tab already has without clobbering edits made during the POST.
+      const merged = mergeDocs({ overrides }, data.doc);
+      overrides = { ...merged.overrides,
+        __categories: merged.__categories,
+        __category_order: merged.__category_order,
+        __cat_t: merged.__cat_t };
+      localStorage.setItem(STORE, JSON.stringify(overrides));
     }
-    // No cloud credentials configured: localStorage remains authoritative.
+    sync.d1Rev = Math.max(sync.d1Rev, revAtSend);
+    sync.lastD1 = Date.now();
+    sync.nextD1 = 0;
+    sync.lastError = "";
+    saveSyncState();
+  }
+
+  async function pushGist(revAtSend, keepalive) {
+    const body = JSON.stringify(syncDoc());
+    const res = await nativeFetch(`https://api.github.com/gists/${GIST_ID}?t=${Date.now()}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${cloudToken}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ files: { [GIST_FILE]: { content: body } } }),
+      keepalive: !!keepalive,
+    });
+    if (!res.ok) {
+      const retryAt = parseRetry(res);
+      if (res.status === 401) {
+        syncBackoff(Date.now() + 15 * 60 * 1000, "gist");
+        throw new Error("gist token expired or lacks gist scope");
+      }
+      if (res.status === 403 || res.status === 429) {
+        syncBackoff(retryAt || 0, "gist");
+        throw new Error("GitHub rate limit; will retry");
+      }
+      throw new Error(`gist write failed (${res.status})`);
+    }
+    sync.gistRev = Math.max(sync.gistRev, revAtSend);
+    sync.lastGist = Date.now();
+    sync.nextGist = 0;
+    sync.lastError = "";
+    try {
+      localStorage.setItem(GIST_CACHE_KEY, JSON.stringify({
+        at: Date.now(), doc: syncDoc(),
+      }));
+    } catch (_) {}
+    saveSyncState();
+  }
+
+  async function pushCloud(force, keepalive) {
+    if (sync.inFlight) { scheduleFlush(); return; }
+    const now = Date.now();
+    const { pendingD1, pendingGist } = targetPending();
+    if (!pendingD1 && !pendingGist) { sync.firstDirty = 0; paintSyncButton(); return; }
+    const d1Due = pendingD1 && now >= sync.nextD1;
+    const gistDue = pendingGist && now >= sync.nextGist &&
+      now - sync.lastGist >= (force ? SYNC.gistHideMin : SYNC.gistMin);
+    if (!d1Due && !gistDue) { scheduleFlush(); return; }
+    sync.inFlight = true;
+    paintSyncButton();
+    const revAtSend = sync.rev;
+    let firstErr = null;
+    try {
+      if (d1Due) {
+        try { await pushD1(revAtSend, keepalive); }
+        catch (err) { firstErr = err; }
+      }
+      if (gistDue) {
+        try { await pushGist(revAtSend, keepalive); }
+        catch (err) { firstErr = firstErr || err; }
+      }
+      if (firstErr) syncError(firstErr);
+      else syncOk();
+    } finally {
+      sync.inFlight = false;
+      if (sync.rev > Math.max(sync.d1Rev, sync.gistRev)) scheduleFlush();
+      else sync.firstDirty = 0;
+      paintSyncButton();
+      refreshSyncPanel();
+    }
   }
 
   function applyOverride(post) {
@@ -151,10 +435,13 @@
   }
 
   function saveOverride(post, patch) {
-    overrides[post.id] = { ...(overrides[post.id] || {}), ...patch };
+    overrides[post.id] = {
+      ...(overrides[post.id] || {}),
+      ...patch,
+      t: Date.now(),
+    };
     localStorage.setItem(STORE, JSON.stringify(overrides));
-    if (cloudTimer) clearTimeout(cloudTimer);
-    cloudTimer = setTimeout(() => { cloudTimer = null; pushCloud(); }, 1500);
+    markDirty();
   }
 
   const json = (data, status = 200) => new Response(
@@ -186,13 +473,13 @@
   function saveRegistry(names) {
     overrides.__category_order = names.filter(Boolean);
     overrides.__categories = names.filter(Boolean);
+    overrides.__cat_t = Date.now();
     localStorage.setItem(STORE, JSON.stringify(overrides));
-    schedulePush();
+    markDirty();
   }
 
   function schedulePush() {
-    if (cloudTimer) clearTimeout(cloudTimer);
-    cloudTimer = setTimeout(() => { cloudTimer = null; pushCloud(); }, 1200);
+    markDirty();
   }
 
   function categoryCounts(items) {
@@ -338,6 +625,124 @@
     return items.sort((a, b) => a.id - b.id);
   }
 
+  function fmtWait(ms) {
+    const s = Math.max(1, Math.round(ms / 1000));
+    return s < 60 ? `${s}s` : `${Math.round(s / 60)}m`;
+  }
+
+  function syncLabel() {
+    const { pendingD1, pendingGist } = targetPending();
+    const pending = pendingD1 || pendingGist;
+    if (sync.inFlight) return "☁ Saving…";
+    if (!cloudToken && !d1Url) return "☁ Local only";
+    const now = Date.now();
+    const d1Locked = pendingD1 && sync.nextD1 > now;
+    const gistLocked = pendingGist && sync.nextGist > now;
+    const unlocked = (pendingD1 && !d1Locked) || (pendingGist && !gistLocked);
+    const locks = [d1Locked ? sync.nextD1 : 0, gistLocked ? sync.nextGist : 0]
+      .filter((t) => t > 0);
+    if (locks.length && !unlocked) {
+      return `☁ Retry ${fmtWait(Math.min(...locks) - now)}`;
+    }
+    if (pending) return "☁ Pending…";
+    return "☁ Saved";
+  }
+
+  function paintSyncButton() {
+    const el = document.getElementById("cloudSync");
+    if (!el) return;
+    el.textContent = syncLabel();
+    const { pendingD1, pendingGist } = targetPending();
+    el.title = !cloudToken && !d1Url
+      ? "Edits are saved in this browser. Click to configure gist/D1 cloud sync."
+      : `${pendingD1 || pendingGist ? "Waiting to save" : "All edits saved"}`
+        + ` · D1 at most 1 write/30s · gist at most 1 commit/5min`
+        + (sync.lastError ? ` · ${sync.lastError}` : "");
+    el.classList.toggle("cloudErr", !!sync.lastError);
+  }
+
+  function refreshSyncPanel() {
+    const box = document.getElementById("cloudPanelState");
+    if (!box) return;
+    const { pendingD1, pendingGist } = targetPending();
+    const provider = cloudToken && d1Url ? "gist + D1"
+      : cloudToken ? "gist" : d1Url ? "D1" : "this browser only";
+    const rows = [
+      `Storage: <b>${provider}</b>`,
+      `Status: <b>${syncLabel().replace("☁ ", "")}</b>`,
+      pendingD1 || pendingGist ? "Unsaved: <b>yes</b> — will retry automatically" : "Unsaved: <b>no</b>",
+      sync.lastError ? `Last error: <b style="color:#f08a8a">${sync.lastError}</b>` : "",
+      `Gist: one commit per ≤5 min · D1: one write per ≤30 s`,
+    ].filter(Boolean);
+    box.innerHTML = rows.map((r) => `<div style="margin:3px 0">${r}</div>`).join("");
+    paintSyncButton();
+  }
+
+  function configureSync() {
+    const token = prompt("GitHub token with gist scope (blank = local only for gist)",
+      cloudToken ? "••••••••" : "");
+    if (token === null) return;
+    if (!token.startsWith("••••")) {
+      cloudToken = token.trim();
+      localStorage.setItem("ig_cloud_token", cloudToken);
+    }
+    const d1 = prompt("D1 Worker endpoint URL (optional)", d1Url);
+    if (d1 === null) return;
+    d1Url = d1.trim();
+    localStorage.setItem("ig_cloud_d1", d1Url);
+    const key = prompt("D1 archive key (optional, stored in this browser)",
+      d1Key ? "••••••••" : "");
+    if (key !== null && !key.startsWith("••••")) {
+      d1Key = key.trim();
+      localStorage.setItem("ig_cloud_d1_key", d1Key);
+    }
+    sync.nextD1 = 0;
+    sync.nextGist = 0;
+    sync.backoff = SYNC.retryMin;
+    loadCloud().then(() => {
+      posts.forEach(applyOverride);
+      refreshSyncPanel();
+      pushCloud(false);
+    });
+  }
+
+  function openSyncPanel() {
+    const existing = document.getElementById("cloudPanel");
+    if (existing) { existing.remove(); return; }
+    const panel = document.createElement("div");
+    panel.id = "cloudPanel";
+    Object.assign(panel.style, {
+      position: "fixed", right: "18px", bottom: "140px", zIndex: "81",
+      width: "300px", padding: "13px", borderRadius: "12px",
+      border: "1px solid #2b364b", background: "#121722", color: "#e9edf6",
+      boxShadow: "0 12px 40px rgba(0,0,0,.45)", fontSize: "12px", lineHeight: "1.45",
+    });
+    panel.innerHTML = `
+      <div style="font-weight:600;margin-bottom:7px">Cloud sync</div>
+      <div id="cloudPanelState"></div>
+      <div style="display:flex;gap:6px;margin-top:10px">
+        <button id="cloudNow" style="flex:1;padding:6px 8px;border-radius:8px;border:1px solid #2b364b;background:#1b2333;color:#e9edf6;cursor:pointer">Sync now</button>
+        <button id="cloudConfig" style="flex:1;padding:6px 8px;border-radius:8px;border:1px solid #2b364b;background:#1b2333;color:#e9edf6;cursor:pointer">Configure…</button>
+        <button id="cloudClose" style="padding:6px 8px;border-radius:8px;border:1px solid #2b364b;background:#1b2333;color:#e9edf6;cursor:pointer">✕</button>
+      </div>
+      <div style="margin-top:9px;color:#9aa7bd">Edits save instantly in this browser. D1 gets at most one write every 30s; the gist gets at most one commit every 5 minutes. Manual sync forces both.</div>`;
+    document.body.appendChild(panel);
+    refreshSyncPanel();
+    document.getElementById("cloudNow").onclick = async () => {
+      await pushCloud(true);
+      refreshSyncPanel();
+    };
+    document.getElementById("cloudConfig").onclick = configureSync;
+    document.getElementById("cloudClose").onclick = () => panel.remove();
+  }
+
+  function urgentFlush() {
+    const { pendingD1, pendingGist } = targetPending();
+    if (!pendingD1 && !pendingGist) return;
+    const gistFresh = Date.now() - sync.lastGist < SYNC.gistHideMin;
+    pushCloud(!gistFresh, true);
+  }
+
   window.fetch = async (input, options = {}) => {
     const requestUrl = typeof input === "string" ? input : input.url;
     const url = new URL(requestUrl, document.baseURI);
@@ -399,26 +804,22 @@
         document.body.appendChild(importBtn);
         const cloudBtn = document.createElement("button");
         cloudBtn.id = "cloudSync";
-        cloudBtn.textContent = "Cloud sync";
-        cloudBtn.title = "Set gist token / D1 fallback for online category and note persistence";
+        cloudBtn.title = "Cloud sync status and settings";
         Object.assign(cloudBtn.style, {
           position: "fixed", right: "18px", bottom: "98px", zIndex: "80",
           padding: "9px 13px", borderRadius: "10px", border: "1px solid #2b364b",
           background: "#121722", color: "#e9edf6", cursor: "pointer", fontSize: "12px",
         });
-        cloudBtn.onclick = () => {
-          const token = prompt("GitHub token with gist scope (stored only in this browser)", cloudToken);
-          if (token === null) return;
-          cloudToken = token.trim();
-          localStorage.setItem("ig_cloud_token", cloudToken);
-          const d1 = prompt("D1 fallback URL (Worker endpoint, optional)", d1Url);
-          if (d1 !== null) {
-            d1Url = d1.trim();
-            localStorage.setItem("ig_cloud_d1", d1Url);
-          }
-          loadCloud().then(() => { posts.forEach(applyOverride); location.reload(); });
-        };
+        cloudBtn.onclick = () => openSyncPanel();
         document.body.appendChild(cloudBtn);
+        paintSyncButton();
+        window.addEventListener("pagehide", urgentFlush);
+        document.addEventListener("visibilitychange", () => {
+          if (document.visibilityState === "hidden") urgentFlush();
+        });
+        setInterval(() => {
+          if (sync.rev > Math.max(sync.d1Rev, sync.gistRev)) pushCloud(false);
+        }, 60000);
       }
     }
     const api = url.pathname.slice(marker + 5);
@@ -448,7 +849,8 @@
               const next = fn(cats(p));
               p.categories = next;
               p.category = next[0] || null;
-              overrides[p.id] = { ...(overrides[p.id] || {}), categories: next };
+              overrides[p.id] = { ...(overrides[p.id] || {}), categories: next,
+                category: next[0] || null, t: Date.now() };
             }
           });
         };
@@ -478,9 +880,30 @@
       return json({ categories: f.category_list, uncategorised: f.filter_counts.uncategorised });
     }
     if (api === "cloud") {
-      const provider = cloudToken ? "gist" : (d1Url ? "d1" : "local");
-      return json({ enabled: true, provider, online: !!(cloudToken || d1Url),
-        last_push: localStorage.getItem("ig_cloud_last_push") || "" });
+      if (method === "POST") {
+        let payload = {};
+        try { payload = JSON.parse(options.body || "{}"); } catch (_) {}
+        const op = String(payload.op || "push");
+        if (op === "pull") {
+          await loadCloud(true);
+          posts.forEach(applyOverride);
+        } else if (op === "push") {
+          await pushCloud(true);
+        }
+      }
+      const provider = cloudToken && d1Url ? "gist+d1"
+        : cloudToken ? "gist" : d1Url ? "d1" : "local";
+      const { pendingD1, pendingGist } = targetPending();
+      return json({
+        enabled: true, provider, online: !!(cloudToken || d1Url),
+        pending: pendingD1 || pendingGist,
+        revision: sync.rev, d1_revision: sync.d1Rev, gist_revision: sync.gistRev,
+        last_push: sync.lastOk || "",
+        last_error: sync.lastError || "",
+        next_retry: Math.min(
+          ...([sync.nextD1, sync.nextGist].filter((t) => t > 0)), 0) || 0,
+        intervals: { d1: SYNC.min, gist: SYNC.gistMin },
+      });
     }
     if (api === "live") {
       const items = sourceItems(currentSource(url.searchParams));

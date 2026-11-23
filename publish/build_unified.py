@@ -24,7 +24,7 @@ SITE = ROOT / "publish/site-unified"
 SRC = ROOT / "publish/site-test"
 MANIFESTS = ROOT / "publish/manifests"
 GIST_ID = "5dc24371e7371776648695269b30cfd2"
-ASSET_VERSION = 50
+ASSET_VERSION = 53
 
 # Gallery source id -> (platform, hub route, label, subtitle, id base)
 PLATFORMS = [
@@ -251,6 +251,15 @@ def main() -> None:
         "titles": {route: label for _s, _p, route, label, _sub, _b in PLATFORMS},
         "subtitles": {route: subtitle for _s, _p, route, _l, subtitle, _b in PLATFORMS},
     }
+    # Telegram is not in the Hugging Face manifest: its UI is static, but the
+    # messages and media come from the tg-archiver server on the local PC.
+    hub["backends"]["telegram"] = "telegram/"
+    hub["titles"]["telegram"] = "Telegram"
+    hub["subtitles"]["telegram"] = "Local archive · files on this computer"
+    telegram_src = ROOT / "publish/telegram-ui"
+    telegram_dst = SITE / "telegram"
+    shutil.copytree(telegram_src, telegram_dst)
+
     config_text = (
         "window.SAVED_CLOUD = " + cloud + ";\n"
         + "window.SAVED_ACCOUNTS = " + json.dumps(accounts_doc, ensure_ascii=False) + ";\n"
@@ -277,6 +286,8 @@ def main() -> None:
                .replace('src="app.js?v=3"', 'src="../app.js?v=3"')
                .replace('src="config.js"', 'src="../config.js"'))
     for route in hub["backends"]:
+        if route == "telegram":
+            continue  # the real Telegram UI is served at /telegram/
         target = SITE / route
         target.mkdir(parents=True, exist_ok=True)
         (target / "index.html").write_text(nested, encoding="utf-8")

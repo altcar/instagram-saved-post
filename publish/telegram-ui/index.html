@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TG Archiver</title>
+  <link rel="stylesheet" href="app.css?v=2">
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <div class="sidebar-top">
+        <div class="brand"><span class="brand-plane">✈</span> TG Archiver</div>
+        <button id="refreshBtn" class="icon-btn" title="Refresh chats">⟳</button>
+      </div>
+      <div class="search-wrap">
+        <input id="search" type="search" placeholder="Search chats" autocomplete="off">
+      </div>
+      <div id="chatList" class="chat-list">
+        <div class="side-loading">Loading chats…</div>
+      </div>
+      <div class="sidebar-foot">
+        <button id="savedExportBtn" class="saved-btn">⬇ Export Saved Messages</button>
+        <div id="meLine" class="me-line"></div>
+        <div class="foot-row">
+          <button id="linkBtn" class="ghost">🔗 t.me</button>
+          <button id="exportsBtn" class="ghost">⤓ Exports</button>
+          <button id="localBtn" class="ghost">🗄 Local</button>
+        </div>
+        <button id="logoutBtn" class="ghost danger full">Log out</button>
+      </div>
+    </aside>
+
+    <main id="main">
+      <header id="chatHeader">
+        <button id="backBtn" class="icon-btn back" title="Back">‹</button>
+        <div id="headerAvatar" class="avatar avatar-sm"><span>✈</span></div>
+        <div class="head-meta">
+          <div id="headerTitle">Choose a chat</div>
+          <div id="headerSub" class="muted">Saved Messages, channels, groups</div>
+        </div>
+        <div class="head-actions">
+          <a id="viewerBtn" class="button sm hidden" target="_blank" rel="noopener">🌐 Viewer</a>
+          <button id="exportBtn" class="primary sm hidden">⤓ Export all</button>
+          <button id="pfpBtn" class="ghost sm hidden" title="Download profile photo">🖼 Photo</button>
+        </div>
+      </header>
+
+      <div id="offlineBanner" class="banner hidden"></div>
+
+      <div id="messages" class="messages">
+        <div class="empty-chat">
+          <div class="empty-plane">✈</div>
+          <h2>Your Telegram archive</h2>
+          <p class="muted">Pick a chat on the left, or paste a <code>t.me</code> link.<br>
+             Export every photo, video, document and text — forward links included.</p>
+        </div>
+      </div>
+
+      <div id="composer" class="composer">
+        <button id="loadOlder" class="ghost sm hidden">↑ Load older messages</button>
+        <span id="composerHint" class="muted">Read-only archive view</span>
+      </div>
+    </main>
+  </div>
+
+  <!-- setup / login -->
+  <div id="setup" class="overlay hidden">
+    <div class="setup-card">
+      <div class="setup-logo">✈</div>
+      <h1>TG Archiver</h1>
+      <p class="muted intro">Archive Saved Messages and any channel you can access — media, text and forward links, shown in a Telegram-style viewer.</p>
+
+      <form id="configForm" class="hidden">
+        <label class="field">API ID
+          <input id="apiId" type="number" placeholder="1234567" required>
+        </label>
+        <label class="field">API Hash
+          <input id="apiHash" type="text" placeholder="0123456789abcdef0123456789abcdef" spellcheck="false" required>
+        </label>
+        <p class="hint">Create your own app at
+          <a href="https://my.telegram.org/apps" target="_blank" rel="noopener">my.telegram.org/apps</a>.
+          Credentials stay on this machine in <code>data/config.json</code>.
+        </p>
+        <button type="submit" class="primary full">Save credentials</button>
+      </form>
+
+      <form id="phoneForm" class="hidden">
+        <label class="field">Phone number
+          <input id="phone" type="tel" placeholder="+14155550123" autocomplete="tel" required>
+        </label>
+        <p class="hint">International format. Telegram will send a login code to this account.</p>
+        <button type="submit" class="primary full">Send login code</button>
+        <button type="button" id="backToConfig" class="ghost full">Change API credentials</button>
+      </form>
+
+      <form id="codeForm" class="hidden">
+        <label class="field">Login code
+          <input id="code" inputmode="numeric" autocomplete="one-time-code" placeholder="12345" required>
+        </label>
+        <label id="passwordRow" class="field hidden">Two-step password
+          <input id="password" type="password" autocomplete="current-password" placeholder="Your cloud password">
+        </label>
+        <button type="submit" class="primary full">Sign in</button>
+        <button type="button" id="resendBtn" class="ghost full">Send a new code</button>
+      </form>
+
+      <div id="setupError" class="error hidden"></div>
+      <div id="setupInfo" class="hint hidden"></div>
+    </div>
+  </div>
+
+  <!-- lightbox -->
+  <div id="lightbox" class="lightbox hidden">
+    <button class="lb-close" title="Close">×</button>
+    <div id="lbBody" class="lb-body"></div>
+  </div>
+
+  <!-- export modal -->
+  <div id="exportModal" class="modal hidden">
+    <div class="modal-head">
+      <h2 id="exportTitle">Export chat</h2>
+      <button class="modal-close" data-close="exportModal">×</button>
+    </div>
+    <div class="modal-body">
+      <div id="exportSetup">
+        <div class="field-row">
+          <label class="field">How much
+            <select id="exportLimit">
+              <option value="0">Everything</option>
+              <option value="500">Newest 500</option>
+              <option value="2000">Newest 2000</option>
+            </select>
+          </label>
+          <label class="check"><input id="exportMedia" type="checkbox" checked> Download media files</label>
+        </div>
+        <p id="exportNote" class="muted"></p>
+        <button id="startExport" class="primary full">Start export</button>
+      </div>
+
+      <div id="exportProgress" class="hidden">
+        <div class="bar"><div id="exportBar"></div></div>
+        <div id="exportStat" class="muted"></div>
+        <div id="exportCurrent" class="current"></div>
+        <div class="progress-actions">
+          <a id="openExport" class="button hidden" target="_blank" rel="noopener">Open HTML viewer</a>
+          <a id="zipExport" class="button hidden">Download ZIP</a>
+          <button id="cancelExport" class="ghost hidden">Cancel</button>
+        </div>
+        <div id="exportPath" class="path"></div>
+      </div>
+      <div id="exportError" class="error hidden"></div>
+    </div>
+  </div>
+
+  <!-- exports list -->
+  <div id="exportsModal" class="modal hidden">
+    <div class="modal-head">
+      <h2>Exports</h2>
+      <button class="modal-close" data-close="exportsModal">×</button>
+    </div>
+    <div class="modal-body">
+      <div id="exportsList"></div>
+    </div>
+  </div>
+
+  <!-- link resolver -->
+  <div id="linkModal" class="modal hidden">
+    <div class="modal-head">
+      <h2>Open t.me link</h2>
+      <button class="modal-close" data-close="linkModal">×</button>
+    </div>
+    <div class="modal-body">
+      <label class="field">Link
+        <input id="linkInput" type="text" placeholder="https://t.me/c/3378708031/4615" spellcheck="false">
+      </label>
+      <p class="hint">Private <code>t.me/c/&lt;id&gt;/&lt;msg&gt;</code> links work when the logged-in account is a member of that channel.</p>
+      <button id="resolveBtn" class="primary full">Open chat</button>
+      <div id="linkError" class="error hidden"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <!-- persistent live-downloads dock -->
+  <div id="downloadDock" class="dock hidden">
+    <div id="dockHead" class="dock-head">
+      <span class="dock-ico">⤓</span>
+      <span id="dockTitle">Downloads</span>
+      <span id="dockSpinner" class="dock-spinner"></span>
+      <button id="dockToggle" class="icon-btn" title="Collapse">▾</button>
+    </div>
+    <div id="dockList" class="dock-list"></div>
+  </div>
+
+  <script src="config.js?v=2"></script>
+  <script src="app.js?v=2"></script>
+</body>
+</html>

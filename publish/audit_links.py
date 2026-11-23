@@ -38,25 +38,35 @@ UA = {"User-Agent": "ig-archive-link-audit/1.0 (+static gallery check)",
 TIMEOUT = 45
 
 
-def fetch(url: str, *, head_first: bool = True) -> tuple[int, str]:
-    """Return (status, note). Follows redirects; falls back HEAD -> GET."""
+def fetch(url: str, *, head_first: bool = True,
+          retries: int = 6) -> tuple[int, str]:
+    """Return (status, note). Retries the Hugging Face CDN's 429s politely."""
     methods = ("HEAD", "GET") if head_first else ("GET",)
     last = (0, "unreachable")
-    for method in methods:
-        request = urllib.request.Request(url, method=method, headers=UA)
-        if method == "GET":
-            request.add_header("Range", "bytes=0-0")
-        try:
-            with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
-                size = response.headers.get("Content-Length") or ""
-                return response.status, f"{size} bytes"
-        except urllib.error.HTTPError as exc:
-            last = (exc.code, exc.reason or "")
-            if exc.code in (403, 429):
-                return last  # do not hammer a rate-limited host
-        except Exception as exc:
-            last = (0, type(exc).__name__)
-        time.sleep(0.05)
+    attempt = 0
+    while attempt <= retries:
+        attempt += 1
+        for method in methods:
+            request = urllib.request.Request(url, method=method, headers=UA)
+            if method == "GET":
+                request.add_header("Range", "bytes=0-0")
+            try:
+                with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+                    size = response.headers.get("Content-Length") or ""
+                    return response.status, f"{size} bytes"
+            except urllib.error.HTTPError as exc:
+                last = (exc.code, exc.reason or "")
+                if exc.code == 429:
+                    break  # back off below, outside the method loop
+                if exc.code == 403:
+                    return last
+            except Exception as exc:
+                last = (0, type(exc).__name__)
+            time.sleep(0.05)
+        if last[0] != 429 or attempt > retries:
+            break
+        delay = min(60, 6 * (2 ** attempt)) + (hash(url) % 3)
+        time.sleep(delay)
     return last
 
 
@@ -82,7 +92,7 @@ def main() -> int:
                         help="only check N posts per source (0 = all)")
     parser.add_argument("--sources", default="",
                         help="comma separated source ids (default: all five)")
-    parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument("--workers", type=int, default=3)
     args = parser.parse_args()
 
     base = args.base if args.base.endswith("/") else args.base + "/"

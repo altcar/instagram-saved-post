@@ -1,0 +1,138 @@
+{
+ "generated_at": "2026-11-23T10:44:44",
+ "base": "https://altcar.github.io/instagram-saved-post/",
+ "pages": {
+  "shalevfrfr": {
+   "url": "https://altcar.github.io/instagram-saved-post/gallery/?source=shalevfrfr",
+   "status": 206
+  },
+  "threads": {
+   "url": "https://altcar.github.io/instagram-saved-post/gallery/?source=threads",
+   "status": 206
+  },
+  "x": {
+   "url": "https://altcar.github.io/instagram-saved-post/gallery/?source=x",
+   "status": 206
+  },
+  "rednote": {
+   "url": "https://altcar.github.io/instagram-saved-post/gallery/?source=rednote",
+   "status": 206
+  },
+  "reddit": {
+   "url": "https://altcar.github.io/instagram-saved-post/gallery/?source=reddit",
+   "status": 206
+  }
+ },
+ "sources": {
+  "shalevfrfr": {
+   "platform": "instagram",
+   "page_url": "https://altcar.github.io/instagram-saved-post/gallery/?source=shalevfrfr",
+   "page_status": 206,
+   "posts": 5,
+   "posts_in_manifest": 5,
+   "checks": 20,
+   "ok": 20,
+   "failed": 0,
+   "by_kind": {
+    "thumb": 5,
+    "comments": 5,
+    "media": 5,
+    "permalink": 5
+   },
+   "status_histogram": {
+    "200": 20
+   },
+   "failed_urls": [],
+   "checked_posts": []
+  },
+  "threads": {
+   "platform": "threads",
+   "page_url": "https://altcar.github.io/instagram-saved-post/gallery/?source=threads",
+   "page_status": 206,
+   "posts": 174,
+   "posts_in_manifest": 174,
+   "checks": 1136,
+   "ok": 1136,
+   "failed": 0,
+   "by_kind": {
+    "thumb": 403,
+    "comments": 150,
+    "media": 406,
+    "permalink": 174,
+    "cover": 3
+   },
+   "status_histogram": {
+    "200": 1136
+   },
+   "failed_urls": [],
+   "checked_posts": []
+  },
+  "x": {
+   "platform": "x",
+   "page_url": "https://altcar.github.io/instagram-saved-post/gallery/?source=x",
+   "page_status": 206,
+   "posts": 48,
+   "posts_in_manifest": 48,
+   "checks": 251,
+   "ok": 251,
+   "failed": 0,
+   "by_kind": {
+    "thumb": 56,
+    "avatar": 48,
+    "media": 56,
+    "permalink": 48,
+    "comments": 43
+   },
+   "status_histogram": {
+    "200": 251
+   },
+   "failed_urls": [],
+   "checked_posts": []
+  },
+  "rednote": {
+   "platform": "rednote",
+   "page_url": "https://altcar.github.io/instagram-saved-post/gallery/?source=rednote",
+   "page_status": 206,
+   "posts": 254,
+   "posts_in_manifest": 254,
+   "checks": 1925,
+   "ok": 1925,
+   "failed": 0,
+   "by_kind": {
+    "thumb": 813,
+    "comments": 45,
+    "media": 813,
+    "permalink": 254
+   },
+   "status_histogram": {
+    "200": 1925
+   },
+   "failed_urls": [],
+   "checked_posts": []
+  },
+  "reddit": {
+   "platform": "reddit",
+   "page_url": "https://altcar.github.io/instagram-saved-post/gallery/?source=reddit",
+   "page_status": 206,
+   "posts": 2,
+   "posts_in_manifest": 2,
+   "checks": 8,
+   "ok": 8,
+   "failed": 0,
+   "by_kind": {
+    "thumb": 2,
+    "comments": 2,
+    "media": 2,
+    "permalink": 2
+   },
+   "status_histogram": {
+    "200": 8
+   },
+   "failed_urls": [],
+   "checked_posts": []
+  }
+ },
+ "failures": [],
+ "manifest_status": 200,
+ "manifest_posts": 483
+}
