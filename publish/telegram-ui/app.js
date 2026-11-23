@@ -316,8 +316,10 @@ function enterLocalMode() {
   banner.classList.remove('hidden');
   banner.innerHTML =
     '<span>🗄 <b>Local archives</b> — these messages and media are on this PC. No Telegram connection needed.</span>' +
-    '<button id="goOnlineBtn" class="ghost sm">Go online / Sign in</button>';
-  $('#goOnlineBtn').onclick = () => { clearLocalMode(); boot(); };
+    (TG_LOCAL_ONLY ? '' :
+      '<button id="goOnlineBtn" class="ghost sm">Go online / Sign in</button>');
+  const goOnline = $('#goOnlineBtn');
+  if (goOnline) goOnline.onclick = () => { clearLocalMode(); boot(); };
 
   $('#savedExportBtn').classList.add('hidden');
   $('#logoutBtn').classList.add('hidden');
