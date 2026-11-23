@@ -25,3 +25,32 @@ data/*/raw/
 data/large_originals/
 publish/site/
 publish/repos/
+
+# browser-bound unsave tokens
+data/unsave_template.txt
+data/unsave_last.json
+
+# per-account registry, cookie jars, locks and logs
+config/accounts.json
+data/accounts/
+data/accounts.lock
+
+# gallery runtime data / local registries
+data/archive.db
+data/archive.db-*
+data/posts/
+data/.cache/
+data/raw/
+data/logs/
+data/saved_posts.json
+data/ads.json
+data/accounts.json
+data/cloud.json
+data/cloud_state.json
+publish/hf_manifest.json
+data/threads_meta.json
+
+publish/.deploy-pages/
+publish/static_overrides.json
+
+publish/site-unified/

@@ -4,25 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Saved Archive</title>
-<link rel="stylesheet" href="/static/style.css?v=18">
+<link rel="stylesheet" href="/static/style.css?v=45">
 </head>
 <body>
-<nav class="socialBar" aria-label="Elsewhere">
-  <a href="https://www.instagram.com/shalevfrfr/saved/" target="_blank" rel="noopener" title="Instagram Saved">
-    <svg viewBox="0 0 24 24"><rect x="3.2" y="3.2" width="17.6" height="17.6" rx="5"/><circle cx="12" cy="12" r="4.1"/><circle cx="17.2" cy="6.8" r="1.1" fill="currentColor" stroke="none"/></svg>
-  </a>
-  <a href="https://www.xiaohongshu.com/" target="_blank" rel="noopener" title="RedNote / Xiaohongshu">
-    <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h16"/><path d="M17 9l3 3-3 3"/></svg>
-  </a>
-  <a href="https://x.com/" target="_blank" rel="noopener" title="X">
-    <svg viewBox="0 0 24 24"><path d="M4 4l16 16M20 4L4 20"/></svg>
-  </a>
-</nav>
+<nav class="socialBar" id="socialBar" aria-label="Accounts and platforms"></nav>
 
 <div id="app">
   <aside class="side">
     <div class="brand">Saved<span>Archive</span></div>
-    <div class="stat"><b id="total">0</b><span>posts indexed</span></div>
+    <div class="sourceName" id="sourceName">Loading…</div>
+    <div class="stat"><b id="total">0</b><span>/</span><b id="expected" class="expected">0</b><span>posts indexed</span></div>
 
     <label class="search">
       <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
@@ -36,13 +27,14 @@
 
     <div class="sideHead">My categories <span><button id="addCat" class="link">+ add</button> <button id="resetFilter" class="link hidden">reset</button></span></div>
     <div id="cats" class="catList"></div>
-    <div class="sideTip">Drop selected posts on a category to assign them.</div>
+    <div class="sideTip">Drop selected posts on a category to assign them. Hover a category for rename, reorder and delete.</div>
 
     <div class="sideHead">Your tags <button id="clearTag" class="link hidden">clear</button></div>
     <div id="tags" class="tagCloud"></div>
 
     <div class="sideFoot">
       <span id="videos">0</span> videos · <span id="shown">0</span> shown
+      <div id="syncState" class="syncState"></div>
     </div>
   </aside>
 
@@ -56,25 +48,67 @@
       </div>
       <select id="sort" title="Sort">
         <option value="manual">Saved order (newest first)</option>
-        <option value="uncategorised">Uncategorised first</option>
         <option value="newest">Newest post</option>
         <option value="oldest">Oldest post</option>
         <option value="likes">Most liked</option>
         <option value="random">Shuffle</option>
       </select>
+      <details class="filterMenu" id="filterMenu">
+        <summary>Filters</summary>
+        <div class="filterPanel">
+          <div class="filterGroup">
+            <b>Show only</b>
+            <label><input type="checkbox" data-filter="no_video"> without video</label>
+            <label><input type="checkbox" data-filter="no_image"> without image</label>
+            <label><input type="checkbox" data-filter="no_ads"> without ads</label>
+          </div>
+          <div class="filterGroup">
+            <b>Needs attention</b>
+            <label><input type="checkbox" data-filter="bad_owner"> without correct ownerLink</label>
+            <label><input type="checkbox" data-filter="bad_cover"> without correct cover</label>
+            <label><input type="checkbox" data-filter="caption_empty"> caption empty</label>
+            <label><input type="checkbox" data-filter="caption_error"> caption error/429</label>
+            <label><input type="checkbox" data-filter="bad_shortcode"> without post shortcode</label>
+            <label><input type="checkbox" data-filter="comments_empty"> comments empty</label>
+            <label><input type="checkbox" data-filter="comments_error"> comments error/429</label>
+          </div>
+          <div class="filterGroup">
+            <b>Saved status</b>
+            <label><input type="checkbox" data-filter="still_saved"> still in saved</label>
+            <label><input type="checkbox" data-filter="already_unsaved"> already unsaved</label>
+          </div>
+          <div class="filterGroup">
+            <b>Coverage</b>
+            <label><input type="checkbox" data-filter="uncategorised"> uncategorised only</label>
+          </div>
+          <div class="filterGroup">
+            <b>Only categories</b>
+            <div id="onlyCats" class="onlyCats"></div>
+          </div>
+          <button class="btn small" id="clearFilters">Clear filters</button>
+        </div>
+      </details>
       <div class="count" id="count"></div>
       <div class="hint" id="hint">Click a card to open · drag empty space to select</div>
     </header>
 
     <div id="grid" class="grid"></div>
+    <!-- LIVE_START -->
     <div id="liveView" class="liveView hidden">
       <div class="liveHead">
-        <span>Live dashboard</span>
-        <a class="link" href="http://127.0.0.1:8766/" target="_blank">open in new tab ↗</a>
+        <span id="liveTitle">Live dashboard</span>
+        <span class="liveHeadActions">
+          <button id="liveRefresh" class="link">refresh</button>
+          <a id="liveOpen" class="link" href="http://127.0.0.1:8766/" target="_blank" rel="noopener">open dashboard ↗</a>
+        </span>
       </div>
-      <iframe src="http://127.0.0.1:8766/" title="Live dashboard"></iframe>
-      <div class="liveNote">If the frame is blank, start the dashboard on port 8766.</div>
+      <div id="livePanel" class="livePanel"></div>
+      <div id="liveFrameWrap" class="liveFrameWrap hidden">
+        <iframe id="liveFrame" title="Live dashboard"></iframe>
+      </div>
+      <div class="liveNote" id="liveNote">Live download, comments and unsave progress for this account.</div>
     </div>
+    <!-- LIVE_END -->
     <div id="sentinel" class="sentinel"></div>
     <div id="empty" class="empty hidden">No posts match this filter.</div>
     <div id="selectBox" class="selectBox hidden"></div>
@@ -83,7 +117,7 @@
   <div id="scrim" class="scrim hidden"></div>
   <aside id="drawer" class="drawer" aria-hidden="true">
     <div class="drawerTop">
-      <a id="dPermalink" target="_blank" rel="noopener" class="link">Open on Instagram ↗</a>
+      <a id="dPermalink" target="_blank" rel="noopener" class="link">Open post ↗</a>
       <button id="closeDrawer" class="iconBtn" title="Close">✕</button>
     </div>
     <div id="drawerBody" class="drawerBody"></div>
@@ -100,6 +134,7 @@
   <article class="card">
     <div class="thumbWrap">
       <img class="thumb" loading="lazy" decoding="async" alt="">
+      <div class="thumbText" hidden></div>
       <video class="cardVideo" hidden playsinline muted></video>
       <button class="play" title="Play"></button>
       <button class="navBtn prev" title="Previous media">‹</button>
@@ -116,11 +151,11 @@
       </div>
       <div class="caption"></div>
       <div class="cardTags"></div>
-      <div class="cardFoot"><span class="likes"></span><span class="date"></span></div>
+      <div class="cardFoot"><span class="likes"></span><span class="comments"></span><span class="date"></span></div>
     </div>
   </article>
 </template>
 
-<script src="/static/app.js?v=18"></script>
+<script src="/static/app.js?v=46"></script>
 </body>
 </html>

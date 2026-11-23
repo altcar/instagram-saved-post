@@ -1,0 +1,52 @@
+:root{
+  --bg:#0a0c11; --panel:#0e121b; --line:#1e2636; --text:#e9edf6;
+  --muted:#8b96ad; --dim:#66718a; --accent:#c13584; --accent2:#f77737;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--text);
+  font:14px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial;
+  -webkit-font-smoothing:antialiased}
+a{color:inherit}
+button{font:inherit;color:inherit}
+.hidden{display:none!important}
+
+.socialBar{position:fixed;left:0;top:0;bottom:0;width:52px;z-index:80;display:flex;
+  flex-direction:column;align-items:center;gap:8px;padding:14px 0;
+  background:#0b0e15;border-right:1px solid var(--line)}
+.socialBar a{width:36px;height:36px;display:grid;place-items:center;border-radius:10px;
+  color:#8b96ad;text-decoration:none;border:1px solid transparent}
+.socialBar a:hover{background:#161d2a;color:#fff}
+.socialBar a.on{background:linear-gradient(135deg,rgba(193,53,132,.35),rgba(247,119,55,.2));
+  border-color:rgba(193,53,132,.55);color:#fff}
+.socialBar svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.8;
+  stroke-linecap:round;stroke-linejoin:round}
+.socialBar .railLabel{position:absolute;left:58px;top:50%;transform:translateY(-50%);
+  background:#121722;border:1px solid #2b364b;border-radius:8px;padding:4px 8px;
+  font-size:11px;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .12s}
+.socialBar a:hover .railLabel{opacity:1}
+.socialBar .spacer{margin-top:auto}
+
+.hubMain{margin-left:52px;height:100vh;display:flex;flex-direction:column;min-width:0}
+.hubTop{display:flex;align-items:center;justify-content:space-between;gap:14px;
+  padding:10px 16px;border-bottom:1px solid var(--line);flex:none;background:#0b0e15}
+.hubTitle{font-size:14px;font-weight:750;letter-spacing:-.2px}
+.hubSub{font-size:10.5px;color:var(--dim);margin-top:1px}
+.hubActions{display:flex;align-items:center;gap:8px}
+.hubBtn{background:#151b27;border:1px solid var(--line);border-radius:9px;padding:6px 10px;
+  color:var(--muted);text-decoration:none;font-size:11.5px;cursor:pointer}
+.hubBtn:hover{color:#fff;border-color:#3a4a68}
+.hubFrameWrap{flex:1;min-height:0;padding:10px 12px 12px}
+#hubFrame{width:100%;height:100%;border:1px solid var(--line);border-radius:14px;
+  background:#0d1119}
+
+@media(max-width:700px){
+  .socialBar{width:46px}
+  .hubMain{margin-left:46px}
+  .hubSub{display:none}
+}
+
+.hubSelect{background:#151b27;border:1px solid var(--line);border-radius:9px;
+  color:var(--text);padding:6px 9px;font-size:11.5px;max-width:260px;outline:none}
+.hubSelect:focus{border-color:#3a4a68}
+@media(max-width:700px){.hubSelect{max-width:150px}}
