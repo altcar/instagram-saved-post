@@ -39,6 +39,11 @@ Details:
   written if at least 15 s have passed since its previous commit.
 - `403`/`429`/`5xx` responses honour `Retry-After`/`X-RateLimit-Reset` and back
   off exponentially (30 s → 30 min). D1 and gist back off independently.
+- Gist reads are cached for 5 minutes, so anonymous callers stay well under
+  GitHub's 60 requests/hour limit.
+- On load the browser merges three sources by per-post `t`: the shipped
+  `static_overrides.json`, the D1 document, and the gist
+  (`static_overrides.json` plus the full `cloud_state.json` export).
 - The D1 Worker merges per-post `t` timestamps, so two tabs or two devices do not
   overwrite each other.
 - The “Cloud sync” button shows `Saved`, `Pending…`, `Retry 2m`, or
