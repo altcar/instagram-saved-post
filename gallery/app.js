@@ -13,7 +13,8 @@
     filters: new Set(), onlyCats: new Set(),
     offset: 0, limit: 60, total: 0, items: [], loading: false, done: false,
     selected: new Set(),
-    accounts: [], account: null, services: [], hubBase: "",
+    accounts: [], account: null, services: [],
+    hubBase: (window.SAVED_BASE_URL || "").replace(/\/+$/, ""),
   };
   // Personal-tag chips cycle: off -> include -> exclude -> off.
   const tagMode = (name) => state.tagStates.get(name) || "off";

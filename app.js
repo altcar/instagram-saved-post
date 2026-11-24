@@ -32,7 +32,8 @@
     return `<svg viewBox="0 0 24 24"><path d="M4 20V9M10 20V4M16 20v-7M22 20H2"/></svg>`;
   };
 
-  const siteBase = new URL(cfg.siteBase || ".", location.href).href;
+  const siteBase = new URL(
+    cfg.siteBase || window.SAVED_BASE_URL || ".", location.href).href;
   const params = new URLSearchParams(location.search);
   const sitePath = new URL(siteBase).pathname.replace(/\/+$/, "");
   const relPath = sitePath && location.pathname.startsWith(sitePath)
@@ -121,9 +122,13 @@
         const allOption = options.length > 1
           ? `<option value="__all__">All accounts · ${combinedTotal.toLocaleString()}</option>`
           : "";
+        // Instagram rows are the archive accounts themselves, so show the
+        // handle exactly like the local hub; other platforms keep their label.
+        const optionName = (a) => String(a.platform || "").toLowerCase() === "instagram"
+          ? (a.handle || a.id) : (a.label || a.id);
         accountSelect.innerHTML = allOption + options.map((a) => `
           <option value="${String(a.id).replace(/"/g, "&quot;")}">
-            ${a.label || a.id}${a.total != null ? " · " + Number(a.total).toLocaleString() : ""}
+            ${optionName(a)}${a.total != null ? " · " + Number(a.total).toLocaleString() : ""}
           </option>`).join("");
         const isAll = source === "all" && allOption;
         if (!isAll && !options.some((a) => a.id === source)) source = options[0].id;
