@@ -74,6 +74,7 @@
   const platformName = (p) => ({
     instagram: "Instagram", rednote: "RedNote", xiaohongshu: "RedNote",
     threads: "Threads", twitter: "X / Twitter", x: "X / Twitter",
+    reddit: "Reddit",
   }[String(p || "").toLowerCase()] || String(p || "Source"));
 
   function apiUrl(url) {
@@ -94,6 +95,7 @@
     if (state.hubBase && !embedded) {
       const route = platform === "rednote" ? "rednote"
         : platform === "threads" ? "threads"
+        : platform === "reddit" ? "reddit"
         : (platform === "twitter" || platform === "x") ? "twitter" : "instagram";
       return `${state.hubBase}/${route}?source=${encodeURIComponent(id)}`;
     }
@@ -119,6 +121,9 @@
     }
     if (platform === "twitter" || platform === "x") {
       return `<svg viewBox="0 0 24 24"><path d="M4 4l16 16M20 4L4 20"/></svg>`;
+    }
+    if (platform === "reddit") {
+      return `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><circle cx="9.2" cy="12.6" r="1" fill="currentColor" stroke="none"/><circle cx="14.8" cy="12.6" r="1" fill="currentColor" stroke="none"/><path d="M9 15.4c.9.8 1.9 1.1 3 1.1s2.1-.3 3-1.1"/><path d="M12 3.4v3.1M12 3.4l4-1.1"/></svg>`;
     }
     return `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M4 12h16M12 4c3 3 3 13 0 16M12 4c-3 3-3 13 0 16"/></svg>`;
   }
@@ -991,11 +996,17 @@
 
   function renderDrawer(post) {
     const platform = String(state.account?.platform || "").toLowerCase();
-    $("drawer").classList.toggle("threads", ["threads", "twitter", "x"].includes(platform));
+    // Reddit uses the same media + comments side-by-side drawer as X/Threads.
+    const threadsMode = ["threads", "twitter", "x", "reddit"].includes(platform);
+    $("drawer").classList.toggle("threads", threadsMode);
     $("dPermalink").href = post.permalink || "#";
-    $("dPermalink").textContent = platform === "rednote"
-      ? "Open on RedNote ↗"
-      : (platform === "threads" ? "Open on Threads ↗" : "Open on Instagram ↗");
+    $("dPermalink").textContent = ({
+      rednote: "Open on RedNote ↗",
+      threads: "Open on Threads ↗",
+      twitter: "Open on X ↗",
+      x: "Open on X ↗",
+      reddit: "Open on Reddit ↗",
+    })[platform] || "Open on Instagram ↗";
     const postCats = Array.isArray(post.categories) && post.categories.length
       ? [...post.categories]
       : (post.category ? [post.category] : []);
@@ -1036,7 +1047,6 @@
       ? `<a href="${esc(post.permalink)}" target="_blank" rel="noopener">${esc(post.shortcode || "post")}</a>`
       : esc(post.shortcode || "");
 
-    const threadsMode = ["threads", "twitter", "x"].includes(platform);
     const layoutOpen = threadsMode
       ? '<div class="threadsLayout"><div class="threadsMain">' : "";
     const layoutSplit = threadsMode
