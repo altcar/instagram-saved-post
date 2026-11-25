@@ -5,8 +5,8 @@
       "platform": "instagram",
       "label": "Instagram · shalevfrfr",
       "handle": "",
-      "total": 12094,
-      "videos": 8544
+      "total": 12091,
+      "videos": 8541
     },
     {
       "id": "prettysushey",
@@ -25,20 +25,20 @@
       "videos": 140
     },
     {
-      "id": "threads",
-      "platform": "threads",
-      "label": "Threads",
-      "handle": "",
-      "total": 174,
-      "videos": 57
-    },
-    {
       "id": "x",
       "platform": "x",
       "label": "X / Twitter",
       "handle": "",
-      "total": 109,
-      "videos": 40
+      "total": 230,
+      "videos": 97
+    },
+    {
+      "id": "threads",
+      "platform": "threads",
+      "label": "Threads",
+      "handle": "",
+      "total": 192,
+      "videos": 68
     },
     {
       "id": "saas.sheffield",
