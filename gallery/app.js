@@ -9,7 +9,7 @@
 
   const state = {
     source: params.get("source") || (isRednotePath ? "rednote-main" : "instagram-main"),
-    q: "", category: "", tagStates: new Map(), owner: "", sort: "manual", view: "grid",
+    q: "", category: "", suggested: "", tagStates: new Map(), owner: "", sort: "manual", view: "grid",
     filters: new Set(), onlyCats: new Set(),
     offset: 0, limit: 60, total: 0, items: [], loading: false, done: false,
     selected: new Set(),
@@ -360,6 +360,47 @@
         loadFacets();
       };
     });
+    // Suggested categories are classifier output only: they never file a post.
+    const sug = f.suggested || [];
+    const sugN = $("suggestedN");
+    if (sugN) sugN.textContent = sug.length ? `${sug.length} labels` : "";
+    if ($("suggested")) {
+      const all = `<div class="cat ${state.suggested === "" ? "on" : ""}" data-sug=""
+          title="Show all posts"><span class="catName">Any suggestion</span>
+          <span class="catN">${fmtNum(f.total)}</span></div>`;
+      $("suggested").innerHTML = all + sug.map((s) => `
+        <div class="cat ${state.suggested === s.name ? "on" : ""}" data-sug="${esc(s.name)}"
+             title="Filter by suggested category (does not file the post)">
+          <span class="catName">${esc(s.name)}</span>
+          <span class="catN">${fmtNum(s.count)}</span>
+        </div>`).join("");
+      $("suggested").querySelectorAll(".cat").forEach((el) => {
+        el.onclick = () => {
+          state.suggested = state.suggested === el.dataset.sug ? "" : el.dataset.sug;
+          reset();
+          loadFacets();
+        };
+      });
+    }
+
+    // Hashtags captured from the post itself (read-only filter).
+    const postTags = f.post_tags || [];
+    if ($("postTags")) {
+      $("postTags").innerHTML = postTags.slice(0, 80).map((t) => `
+        <span class="tag" data-posttag="${esc(t.name)}" role="button"
+          title="Search posts containing #${esc(t.name)}">#${esc(t.name)} <b>${fmtNum(t.count)}</b></span>`
+      ).join("") || '<span class="hint">No hashtags captured.</span>';
+      $("postTags").querySelectorAll(".tag").forEach((el) => {
+        el.onclick = () => {
+          state.q = el.dataset.posttag;
+          $("search").value = state.q;
+          state.suggested = "";
+          reset();
+          loadFacets();
+        };
+      });
+    }
+
     $("clearTag").classList.toggle("hidden", !state.tagStates.size);
     $("clearSel").classList.toggle("hidden", !state.selected.size);
   }
@@ -488,6 +529,7 @@
     const query = new URLSearchParams({
       offset: state.offset, limit: state.limit, q: state.q,
       category: state.category,
+      suggested: state.suggested,
       // Multiple chips compose: includes are ANDed, excludes are ANDed.
       // Each tag has a single state, so exclude always wins for one tag.
       tag: activeTags("in").join(","),
@@ -1538,6 +1580,22 @@
         <div class="s">Loading download, pipeline and log status…</div></div>`;
     }
     const platform = String((state.account || {}).platform || "").toLowerCase();
+    // The 8766 dashboard owns the live view (per-account and per-platform);
+    // embedding it avoids the broken grid cards that used to be rendered here.
+    const route = platform === "x" ? "twitter" : (platform || "instagram");
+    const dashQuery = new URLSearchParams({ platform: route });
+    if (state.source) dashQuery.set("account", state.source);
+    const dashUrl = `http://127.0.0.1:8766/?${dashQuery.toString()}`;
+    if ($("livePanel")) $("livePanel").style.display = "none";
+    if ($("liveFrameWrap")) $("liveFrameWrap").classList.remove("hidden");
+    if ($("liveFrame") && $("liveFrame").getAttribute("src") !== dashUrl) {
+      $("liveFrame").src = dashUrl;
+    }
+    if ($("liveOpen")) $("liveOpen").href = dashUrl;
+    if ($("liveNote")) {
+      $("liveNote").textContent = "Live progress is served by the local 8766 dashboard.";
+    }
+    return;
     let dash = null;
     if (platform === "instagram") {
       try { dash = await apiWithTimeout("/api/dashboard", 25000); } catch (_) { dash = null; }

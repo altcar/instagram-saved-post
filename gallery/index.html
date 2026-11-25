@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Saved Archive</title>
-<link rel="stylesheet" href="style.css?v=68">
+<link rel="stylesheet" href="style.css?v=69">
 </head>
 <body>
 <nav class="socialBar" id="socialBar" aria-label="Accounts and platforms"></nav>
@@ -25,12 +25,27 @@
       <button id="clearOwner" class="link" title="Clear">✕</button>
     </div>
 
-    <div class="sideHead">My categories <span><button id="addCat" class="link">+ add</button> <button id="resetFilter" class="link hidden">reset</button></span></div>
-    <div id="cats" class="catList"></div>
-    <div class="sideTip">Drop selected posts on a category to assign them. Hover a category for rename, reorder and delete.</div>
+    <details class="sideGroup" id="grpSuggested">
+      <summary>Suggested categories <span id="suggestedN" class="mini"></span></summary>
+      <div id="suggested" class="catList"></div>
+      <div class="sideTip">Classifier output. Click to filter; it never files a post.</div>
+    </details>
 
-    <div class="sideHead">Your tags <button id="clearTag" class="link hidden">clear</button></div>
-    <div id="tags" class="tagCloud"></div>
+    <details class="sideGroup" id="grpCats" open>
+      <summary>My categories <span><button id="addCat" class="link">+ add</button> <button id="resetFilter" class="link hidden">reset</button></span></summary>
+      <div id="cats" class="catList"></div>
+      <div class="sideTip">Drop selected posts on a category to assign them. Hover a category for rename, reorder and delete.</div>
+    </details>
+
+    <details class="sideGroup" id="grpTags" open>
+      <summary>My tags <button id="clearTag" class="link hidden">clear</button></summary>
+      <div id="tags" class="tagCloud"></div>
+    </details>
+
+    <details class="sideGroup" id="grpPostTags">
+      <summary>Tags within posts</summary>
+      <div id="postTags" class="tagCloud"></div>
+    </details>
 
     <div class="sideFoot">
       <span id="videos">0</span> videos · <span id="shown">0</span> shown
@@ -156,8 +171,8 @@
   </article>
 </template>
 
-<script src="config.js?v=68"></script>
-<script src="static-api.js?v=68"></script>
-<script src="app.js?v=68"></script>
+<script src="config.js?v=69"></script>
+<script src="static-api.js?v=69"></script>
+<script src="app.js?v=69"></script>
 </body>
 </html>

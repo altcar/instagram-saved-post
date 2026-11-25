@@ -2,7 +2,7 @@
 (() => {
   window.__STATIC = true;
   const nativeFetch = window.fetch.bind(window);
-  const ready = nativeFetch("manifest.json?nc=202611250535", { cache: "no-store" })
+  const ready = nativeFetch("manifest.json?nc=202611250800", { cache: "no-store" })
     .then((r) => r.json())
     .then(async (data) => {
       posts = data.posts || [];
@@ -579,9 +579,23 @@
     const names = registry();
     const catList = names.map((name) => ({ name, count: counts[name] || 0 }));
     const tagCounts = {};
-    items.forEach((p) => (p.tags || []).forEach((t) => {
-      tagCounts[t] = (tagCounts[t] || 0) + 1;
-    }));
+    const suggestedCounts = {};
+    const postTagCounts = {};
+    items.forEach((p) => {
+      (p.tags || []).forEach((t) => {
+        tagCounts[t] = (tagCounts[t] || 0) + 1;
+      });
+      if (p.suggested_category) {
+        suggestedCounts[p.suggested_category] =
+          (suggestedCounts[p.suggested_category] || 0) + 1;
+      }
+      (p.hashtags || []).forEach((t) => {
+        postTagCounts[t] = (postTagCounts[t] || 0) + 1;
+      });
+    });
+    const asList = (counts) => Object.entries(counts)
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([name, count]) => ({ name, count }));
     return {
       total: items.length,
       videos: items.filter((p) => p.is_video).length,
@@ -589,9 +603,9 @@
       filter_counts: filterCounts(items),
       categories: catList,
       category_list: catList,
-      tags: Object.entries(tagCounts)
-        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-        .map(([name, count]) => ({ name, count })),
+      tags: asList(tagCounts),
+      suggested: asList(suggestedCounts),
+      post_tags: asList(postTagCounts),
       presets: names.length ? names : (db.facets.presets || []),
       saved: { still_saved: 0, already_unsaved: items.length },
       stats: { comments: items.reduce((n, p) => n + (p.comments_count || 0), 0) },
@@ -621,6 +635,7 @@
     }
     const q = (params.get("q") || "").toLowerCase();
     const category = params.get("category") || "";
+    const suggested = params.get("suggested") || "";
     const tag = params.get("tag") || "";
     const owner = params.get("owner") || "";
     if (q) {
@@ -634,6 +649,7 @@
         || (p.tags || []).some((t) => t.toLowerCase().includes(q))
       ));
     }
+    if (suggested) items = items.filter((p) => p.suggested_category === suggested);
     if (category && category !== "all") items = items.filter((p) => cats(p).includes(category));
     if (tag) items = items.filter((p) => (p.tags || []).includes(tag));
     if (owner) items = items.filter((p) => p.owner === owner);

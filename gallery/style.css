@@ -508,3 +508,13 @@ video.cMedia{object-fit:contain;background:#05070b}
   .threadsComments .commentsPanel{max-height:60vh}
 }
 .grid:not(.list):not(.post) .card.textThumb .caption{display:none}
+
+/* Sidebar: four collapsible sections (suggested / my categories / my tags / post tags) */
+.sideGroup{margin:6px 0 2px;border-top:1px solid #1d2433;padding-top:6px}
+.sideGroup>summary{cursor:pointer;list-style:none;display:flex;align-items:center;justify-content:space-between;
+  font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#8b96ad;padding:4px 2px;user-select:none}
+.sideGroup>summary::-webkit-details-marker{display:none}
+.sideGroup>summary:before{content:"▸";margin-right:6px;color:#5c6a86}
+.sideGroup[open]>summary:before{content:"▾"}
+.sideGroup>summary span{margin-left:auto;display:flex;gap:6px;text-transform:none;letter-spacing:0}
+.sideGroup .mini{color:#6f7d96;font-size:11px}
