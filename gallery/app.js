@@ -15,10 +15,12 @@
       && /\/gallery\/?(index\.html)?$/.test(location.pathname)) {
     const src = params.get("source") || "";
     const raw = (params.get("platform") || "").toLowerCase();
-    const route = raw === "x" || raw === "twitter" ? "twitter"
-      : raw === "reddit" ? "reddit"
-      : raw === "threads" ? "threads"
-      : raw === "rednote" ? "rednote" : "instagram";
+    const srcKey = src.toLowerCase();
+    const route = raw === "x" || raw === "twitter"
+        || srcKey === "x" || srcKey === "twitter" ? "twitter"
+      : raw === "reddit" || srcKey === "reddit" ? "reddit"
+      : raw === "threads" || srcKey === "threads" ? "threads"
+      : raw === "rednote" || srcKey === "rednote" ? "rednote" : "instagram";
     const q = new URLSearchParams({ platform: route });
     if (src) q.set("source", src);
     location.replace(`../?${q.toString()}`);
