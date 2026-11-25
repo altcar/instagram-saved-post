@@ -344,7 +344,6 @@
         loadFacets();
       };
       el.addEventListener("dragover", (e) => {
-        if (!el.dataset.cat) return;
         if (!dragIds && !state.selected.size) return;
         e.preventDefault();
         el.classList.add("over");
@@ -353,7 +352,6 @@
       el.addEventListener("drop", async (e) => {
         e.preventDefault();
         el.classList.remove("over");
-        if (!el.dataset.cat) return;
         const ids = dragIds && dragIds.length ? dragIds : [...state.selected];
         if (ids.length) await assignCategory(el.dataset.cat, ids);
       });
@@ -507,6 +505,7 @@
 
   async function assignCategory(category, ids) {
     if (!ids.length) return;
+    const clearing = !category;
     const uncatFilter = state.filters.has("uncategorised");
     const uncategorisedIds = ids.filter((id) => {
       const item = state.items.find((x) => x.id === id);
@@ -514,14 +513,15 @@
     });
     await api("/api/bulk_category", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids, category }),
+      body: JSON.stringify({ ids, category, clear: clearing }),
     });
     ids.forEach((id) => {
       const item = state.items.find((x) => x.id === id);
       if (item) {
-        item.categories = [...new Set([...(item.categories || []), category])];
-        item.category = item.category || category;
-        item.confidence = 1;
+        item.categories = clearing ? []
+          : [...new Set([...(item.categories || []), category])];
+        item.category = clearing ? null : (item.category || category);
+        item.confidence = clearing ? null : 1;
       }
       const node = document.querySelector(`.card[data-id="${id}"]`);
       if (node && item) paintCategoryChip(node, item);

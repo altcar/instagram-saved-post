@@ -2,7 +2,7 @@
 (() => {
   window.__STATIC = true;
   const nativeFetch = window.fetch.bind(window);
-  const ready = nativeFetch("manifest.json?nc=202611251113", { cache: "no-store" })
+  const ready = nativeFetch("manifest.json?nc=202611251223", { cache: "no-store" })
     .then((r) => r.json())
     .then(async (data) => {
       posts = data.posts || [];
@@ -1073,6 +1073,17 @@
       try {
         const payload = JSON.parse(options.body || "{}");
         const category = String(payload.category || "").trim();
+        const clearing = !category || payload.clear;
+        if (clearing) {
+          (payload.ids || []).forEach((id) => {
+            const post = posts.find((p) => p.id === Number(id));
+            if (!post) return;
+            post.categories = [];
+            post.category = null;
+            saveOverride(post, { categories: [] });
+          });
+          return json({ ok: true });
+        }
         if (category) {
           const names = registry();
           if (!names.includes(category)) saveRegistry([...names, category]);
