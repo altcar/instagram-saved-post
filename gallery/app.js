@@ -7,6 +7,24 @@
   const staticMode = !!window.__STATIC;
   const embedded = params.get("embed") === "1";
 
+  // Direct /gallery/ links on GitHub Pages used to show the gallery's own
+  // 14-account rail without the hub chrome (nav.socialBar + hubTop).  Send the
+  // top-level document to the hub so the cleaner shell is always in charge;
+  // embeds (?embed=1) keep rendering the bare gallery.
+  if (staticMode && !embedded && window.top === window
+      && /\/gallery\/?(index\.html)?$/.test(location.pathname)) {
+    const src = params.get("source") || "";
+    const raw = (params.get("platform") || "").toLowerCase();
+    const route = raw === "x" || raw === "twitter" ? "twitter"
+      : raw === "reddit" ? "reddit"
+      : raw === "threads" ? "threads"
+      : raw === "rednote" ? "rednote" : "instagram";
+    const q = new URLSearchParams({ platform: route });
+    if (src) q.set("source", src);
+    location.replace(`../?${q.toString()}`);
+    return;
+  }
+
   const state = {
     source: params.get("source") || (isRednotePath ? "rednote-main" : "instagram-main"),
     q: "", category: "", suggested: "", tagStates: new Map(), owner: "", sort: "manual", view: "grid",

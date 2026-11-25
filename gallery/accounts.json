@@ -33,6 +33,14 @@
       "videos": 57
     },
     {
+      "id": "x",
+      "platform": "x",
+      "label": "X / Twitter",
+      "handle": "",
+      "total": 109,
+      "videos": 40
+    },
+    {
       "id": "saas.sheffield",
       "platform": "instagram",
       "label": "Instagram · saas.sheffield",
@@ -49,12 +57,12 @@
       "videos": 47
     },
     {
-      "id": "x",
-      "platform": "x",
-      "label": "X / Twitter",
+      "id": "reddit",
+      "platform": "reddit",
+      "label": "Reddit",
       "handle": "",
-      "total": 48,
-      "videos": 13
+      "total": 30,
+      "videos": 1
     },
     {
       "id": "alevelfighter",
@@ -79,14 +87,6 @@
       "handle": "",
       "total": 5,
       "videos": 4
-    },
-    {
-      "id": "reddit",
-      "platform": "reddit",
-      "label": "Reddit",
-      "handle": "",
-      "total": 2,
-      "videos": 1
     },
     {
       "id": "breastfeed.care",
