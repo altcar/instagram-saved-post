@@ -2,21 +2,32 @@
 (() => {
   window.__STATIC = true;
   const nativeFetch = window.fetch.bind(window);
-  const ready = nativeFetch("manifest.json?nc=202611251507", { cache: "no-store" })
+  const ready = nativeFetch("manifest.json?nc=202611252313", { cache: "no-store" })
     .then((r) => r.json())
     .then(async (data) => {
       posts = data.posts || [];
       window.__STATIC_POSTS = posts;
       await loadCloud();
       posts.forEach(applyOverride);
+      // A previous session may have died before its last write landed (or the
+      // page was closed while workers.dev was unreachable).  The pending
+      // revision is persisted in localStorage, so resume it on load.
+      if (sync.rev > Math.max(sync.d1Rev, sync.gistRev)) scheduleFlush();
       return data;
     });
   const STORE = "ig_static_overrides_v1";
   const CLOUD = window.SAVED_CLOUD || {};
   const GIST_ID = CLOUD.gistId || "5dc24371e7371776648695269b30cfd2";
   const GIST_FILE = CLOUD.gistFile || "static_overrides.json";
+  // The deployed site must work with no local server.  workers.dev + D1 is
+  // the primary state store even when config.js only carries the gist id;
+  // a browser can override it (or disable it with an empty value) in the
+  // Cloud sync panel.  Reads/writes of the "default" doc are allowed by the
+  // Worker itself from this origin, so no secret is shipped to a browser.
+  const D1_DEFAULT = CLOUD.d1Url || "https://ig-archive-state.hheylau.workers.dev/";
   let cloudToken = localStorage.getItem("ig_cloud_token") || CLOUD.token || "";
-  let d1Url = localStorage.getItem("ig_cloud_d1") || CLOUD.d1Url || "";
+  const d1Stored = localStorage.getItem("ig_cloud_d1");
+  let d1Url = d1Stored === null ? D1_DEFAULT : d1Stored;
   let d1Key = localStorage.getItem("ig_cloud_d1_key") || "";
   let overrides = {};
   try { overrides = JSON.parse(localStorage.getItem(STORE) || "{}"); } catch (_) {}
@@ -131,8 +142,14 @@
     return 0;
   }
 
-  function syncBackoff(until, provider) {
-    const base = until || (Date.now() + sync.backoff);
+  function dropStaleKey() {
+    if (!d1Key) return false;
+    d1Key = "";
+    try { localStorage.removeItem("ig_cloud_d1_key"); } catch (_) {}
+    return true;
+  }
+
+  function syncBackoff(until, provider) {    const base = until || (Date.now() + sync.backoff);
     const at = Math.min(base, Date.now() + SYNC.retryMax);
     if (provider === "d1") sync.nextD1 = at;
     else if (provider === "gist") sync.nextGist = at;
@@ -184,10 +201,23 @@
         if (!order.includes(c)) order.push(c);
       });
     }
+    // Manual order is a permutation, so the newest list wins outright.
+    const aot = Number(a.__order_t || 0);
+    const bot = Number(b.__order_t || 0);
+    let manual = null;
+    if (aot > bot) manual = a.__order || null;
+    else if (bot > aot) manual = b.__order || null;
+    else {
+      const l = a.__order || [];
+      const r = b.__order || [];
+      manual = r.length >= l.length ? r : l;
+    }
     const out = { ...a, ...b, overrides: merged };
     out.__categories = order.filter(Boolean);
     out.__category_order = out.__categories;
     out.__cat_t = Math.max(at, bt);
+    if (manual && manual.length) out.__order = manual;
+    if (aot || bot) out.__order_t = Math.max(aot, bot);
     out.__updated_at = new Date().toISOString();
     return out;
   }
@@ -231,11 +261,36 @@
         }
       });
     });
+    // Carry the registry so a gist export alone still seeds the category bar.
+    if (out.categories.length) {
+      out.__categories = out.categories.slice();
+      out.__category_order = out.categories.slice();
+      const stamp = Date.parse((state && state.updated_at) || "");
+      out.__cat_t = Number.isFinite(stamp) ? stamp : 1;
+    }
     return out;
+  }
+
+  function adoptDoc(doc) {
+    overrides = doc.overrides || {};
+    overrides.__categories = doc.__categories || [];
+    overrides.__category_order = doc.__category_order || overrides.__categories;
+    overrides.__cat_t = doc.__cat_t || overrides.__cat_t || 0;
+    if (Array.isArray(doc.__order) && doc.__order.length) {
+      overrides.__order = doc.__order;
+      overrides.__order_t = doc.__order_t || overrides.__order_t || 0;
+    }
+    localStorage.setItem(STORE, JSON.stringify(overrides));
   }
 
   async function loadCloud(force) {
     let doc = { ...overrides };
+    // Manual order is kept inside the overrides blob locally, but the Worker
+    // document stores it at the top level; lift it before merging.
+    if (Array.isArray(overrides.__order)) {
+      doc.__order = overrides.__order;
+      doc.__order_t = Number(overrides.__order_t || 0);
+    }
     let localDoc = null;
     try {
       const local = await nativeFetch(`static_overrides.json?nc=${Date.now()}`,
@@ -253,8 +308,14 @@
     if (d1Url) {
       try {
         const headers = d1Key ? { "X-Archive-Key": d1Key } : {};
-        const res = await nativeFetch(`${d1Url}${d1Url.includes("?") ? "&" : "?"}id=default`,
+        let res = await nativeFetch(`${d1Url}${d1Url.includes("?") ? "&" : "?"}id=default`,
           { headers, cache: "no-store" });
+        if ((res.status === 401 || res.status === 403) && dropStaleKey()) {
+          // The public document needs no key; an old key from a previous
+          // install must not lock this browser out of reads.
+          res = await nativeFetch(`${d1Url}${d1Url.includes("?") ? "&" : "?"}id=default`,
+            { cache: "no-store" });
+        }
         if (res.ok) {
           const data = await res.json();
           if (data && data.doc) doc = mergeDocs(doc, data.doc);
@@ -263,10 +324,7 @@
     }
 
     if (!GIST_ID) {
-      overrides = doc.overrides || {};
-      overrides.__categories = doc.__categories || [];
-      overrides.__category_order = overrides.__categories;
-      localStorage.setItem(STORE, JSON.stringify(overrides));
+      adoptDoc(doc);
       return;
     }
 
@@ -311,11 +369,7 @@
       }
     }
     if (remote) doc = mergeDocs(doc, remote);
-    overrides = doc.overrides || {};
-    overrides.__categories = doc.__categories || [];
-    overrides.__category_order = overrides.__category_order || overrides.__categories;
-    overrides.__cat_t = doc.__cat_t || overrides.__cat_t || 0;
-    localStorage.setItem(STORE, JSON.stringify(overrides));
+    adoptDoc(doc);
   }
 
   function syncDoc() {
@@ -324,25 +378,34 @@
       __categories: overrides.__categories || overrides.__category_order || [],
       __category_order: overrides.__category_order || overrides.__categories || [],
       __cat_t: overrides.__cat_t || 0,
+      __order: Array.isArray(overrides.__order) ? overrides.__order : [],
+      __order_t: overrides.__order_t || 0,
       updated_at: new Date().toISOString(),
     };
   }
 
   async function pushD1(revAtSend, keepalive) {
-    const res = await nativeFetch(d1Url, {
+    const send = (withKey) => nativeFetch(d1Url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(d1Key ? { "X-Archive-Key": d1Key } : {}),
+        ...(withKey && d1Key ? { "X-Archive-Key": d1Key } : {}),
       },
       body: JSON.stringify({ doc: syncDoc(), rev: revAtSend }),
       keepalive: !!keepalive,
     });
+    let res = await send(true);
+    if ((res.status === 401 || res.status === 403) && dropStaleKey()) {
+      // A key saved by an older install can be wrong after a rotation; the
+      // public document is writable without it, so retry keyless once.
+      res = await send(false);
+    }
     if (!res.ok) {
       const retryAt = parseRetry(res);
       if (res.status === 401 || res.status === 403) {
         syncBackoff(retryAt || Date.now() + 15 * 60 * 1000, "d1");
-        throw new Error(res.status === 401 ? "D1 key rejected" : "D1 write forbidden");
+        throw new Error(res.status === 401
+          ? "D1 key rejected" : "D1 write forbidden (key or origin)");
       }
       if (res.status === 429 || res.status >= 500) {
         syncBackoff(retryAt || 0, "d1");
@@ -354,11 +417,16 @@
     if (data && data.doc && data.doc.overrides) {
       // The Worker merges by per-post timestamp, so adopt anything newer than
       // what this tab already has without clobbering edits made during the POST.
-      const merged = mergeDocs({ overrides }, data.doc);
+      const merged = mergeDocs({ overrides, __order: overrides.__order,
+        __order_t: overrides.__order_t }, data.doc);
       overrides = { ...merged.overrides,
         __categories: merged.__categories,
         __category_order: merged.__category_order,
         __cat_t: merged.__cat_t };
+      if (Array.isArray(merged.__order) && merged.__order.length) {
+        overrides.__order = merged.__order;
+        overrides.__order_t = merged.__order_t || overrides.__order_t || 0;
+      }
       localStorage.setItem(STORE, JSON.stringify(overrides));
     }
     sync.d1Rev = Math.max(sync.d1Rev, revAtSend);
@@ -426,7 +494,12 @@
           sync.lastD1 = Date.now();
         } else {
           try { await pushD1(revAtSend, keepalive); sync.d1Sig = sig; }
-          catch (err) { firstErr = err; }
+          catch (err) {
+            // Network failures do not set a retry time in pushD1; back off
+            // here so a reload or a dead tab does not hammer the Worker.
+            if (sync.nextD1 <= Date.now()) syncBackoff(0, "d1");
+            firstErr = err;
+          }
         }
       }
       if (gistDue) {
@@ -435,7 +508,10 @@
           sync.lastGist = Date.now();
         } else {
           try { await pushGist(revAtSend, keepalive); sync.gistSig = sig; }
-          catch (err) { firstErr = firstErr || err; }
+          catch (err) {
+            if (sync.nextGist <= Date.now()) syncBackoff(0, "gist");
+            firstErr = firstErr || err;
+          }
         }
       }
       if (firstErr) syncError(firstErr);
@@ -599,7 +675,7 @@
     return {
       total: items.length,
       videos: items.filter((p) => p.is_video).length,
-      ads: 0,
+      ads: items.filter((p) => p.is_ad).length,
       filter_counts: filterCounts(items),
       categories: catList,
       category_list: catList,
@@ -706,7 +782,14 @@
         (rank.has(a.id) ? rank.get(a.id) : 1e9)
         - (rank.has(b.id) ? rank.get(b.id) : 1e9) || a.id - b.id);
     }
-    return items.sort((a, b) => a.id - b.id);
+    // No manual order yet: use the saved-feed order the manifest carries from
+    // the archive DB, so the online-only site shows the same order without a
+    // local server.  Posts without it sort last by id.
+    const savedRank = (p) => {
+      const n = Number(p.order);
+      return Number.isFinite(n) ? n : Number.MAX_SAFE_INTEGER;
+    };
+    return items.sort((a, b) => savedRank(a) - savedRank(b) || a.id - b.id);
   }
 
   function fmtWait(ms) {
@@ -810,7 +893,7 @@
         <button id="cloudConfig" style="flex:1;padding:6px 8px;border-radius:8px;border:1px solid #2b364b;background:#1b2333;color:#e9edf6;cursor:pointer">Configure…</button>
         <button id="cloudClose" style="padding:6px 8px;border-radius:8px;border:1px solid #2b364b;background:#1b2333;color:#e9edf6;cursor:pointer">✕</button>
       </div>
-      <div style="margin-top:9px;color:#9aa7bd">Edits save instantly in this browser. D1 gets at most one write every 30s; the gist gets at most one commit every 5 minutes. Manual sync forces both.</div>`;
+      <div style="margin-top:9px;color:#9aa7bd">Edits save in this browser instantly. D1 on workers.dev is the online copy (at most one write every 30s) and reloads from it automatically; the gist is a 5-minute backup. No key is needed for the public archive document — the Worker accepts writes only from this site's origin.</div>`;
     document.body.appendChild(panel);
     refreshSyncPanel();
     document.getElementById("cloudNow").onclick = async () => {
@@ -834,6 +917,47 @@
     const gistFresh = Date.now() - sync.lastGist < SYNC.gistHideMin;
     pushCloud(!gistFresh, true);
   }
+
+  // The online-only build has no local server.  Block links to the local
+  // downloader dashboard so a dead 127.0.0.1 tab does not look like the
+  // archive is broken; everything else (media, state) is remote.
+  document.addEventListener("click", (event) => {
+    const anchor = event.target && event.target.closest
+      ? event.target.closest('a[href*="127.0.0.1"], a[href*="//localhost"]')
+      : null;
+    if (!anchor) return;
+    event.preventDefault();
+    event.stopPropagation();
+    alert("That opens the local downloader dashboard, which only exists on "
+      + "the machine that runs the archiver. The gallery itself is fully "
+      + "online: media is on Hugging Face and edits sync to workers.dev.");
+  }, true);
+
+  // The hosted build has no local downloader dashboard.  web/app.js still
+  // points the live iframe at 127.0.0.1:8766, which a https page cannot load;
+  // hide it and leave a read-only explanation instead of a broken frame.
+  function maskLocalDashboard() {
+    const wrap = document.getElementById("liveFrameWrap");
+    if (wrap && !wrap.classList.contains("hidden")) {
+      const frame = document.getElementById("liveFrame");
+      if (frame) frame.removeAttribute("src");
+      wrap.classList.add("hidden");
+    }
+    const note = document.getElementById("liveNote");
+    if (note && /127\.0\.0\.1|local 8766|local 8766 dashboard/i.test(
+      note.textContent || "")) {
+      note.textContent = "Live download progress is produced by the local "
+        + "archiver. This hosted gallery shows the finished archive; "
+        + "categories, notes and order are fully online.";
+    }
+  }
+  if (typeof MutationObserver === "function" && document.body) {
+    new MutationObserver(maskLocalDashboard).observe(document.body, {
+      childList: true, subtree: true, attributes: true,
+      attributeFilter: ["class", "src"],
+    });
+  }
+  window.addEventListener("load", maskLocalDashboard);
 
   window.fetch = async (input, options = {}) => {
     const requestUrl = typeof input === "string" ? input : input.url;
@@ -1117,6 +1241,7 @@
         }
         order.splice(at, 0, id);
         overrides.__order = order;
+        overrides.__order_t = Date.now();
         localStorage.setItem(STORE, JSON.stringify(overrides));
         schedulePush();
       } catch (_) {}
