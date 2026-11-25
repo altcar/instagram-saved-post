@@ -2,7 +2,7 @@
 (() => {
   window.__STATIC = true;
   const nativeFetch = window.fetch.bind(window);
-  const ready = nativeFetch("manifest.json?nc=202611241752", { cache: "no-store" })
+  const ready = nativeFetch("manifest.json?nc=202611250535", { cache: "no-store" })
     .then((r) => r.json())
     .then(async (data) => {
       posts = data.posts || [];
