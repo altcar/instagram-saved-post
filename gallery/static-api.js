@@ -2,7 +2,7 @@
 (() => {
   window.__STATIC = true;
   const nativeFetch = window.fetch.bind(window);
-  const ready = nativeFetch("manifest.json?nc=202611261308", { cache: "no-store" })
+  const ready = nativeFetch("manifest.json?nc=202611261446", { cache: "no-store" })
     .then((r) => r.json())
     .then(async (data) => {
       posts = data.posts || [];
@@ -32,6 +32,74 @@
   const d1Stored = localStorage.getItem("ig_cloud_d1");
   let d1Url = d1Stored === null ? D1_DEFAULT : d1Stored;
   let d1Key = localStorage.getItem("ig_cloud_d1_key") || "";
+
+  // ---- serverless gallery API ------------------------------------------
+  // Prefer the deployed gallery Worker (cached manifest + batched edits) and
+  // fall back to the local static manifest handling below whenever it cannot
+  // be reached.  Nothing here is required for the page to work.
+  const GALLERY_API = String(
+    window.SAVED_GALLERY_API || CLOUD.galleryApi
+    || "https://ig-archive-gallery.hheylau.workers.dev").replace(/\/+$/, "");
+  let galleryDownUntil = 0;
+
+  function galleryReady() {
+    return !!GALLERY_API && Date.now() >= galleryDownUntil;
+  }
+
+  async function galleryJson(path, params, init, timeoutMs) {
+    if (!galleryReady()) return null;
+    let target;
+    try { target = new URL(GALLERY_API.replace(/\/+$/, "") + path); }
+    catch (_) { return null; }
+    if (params) {
+      const entries = typeof params.forEach === "function"
+        ? (() => { const out = []; params.forEach((v, k) => out.push([k, v])); return out; })()
+        : Object.entries(params);
+      entries.forEach(([key, value]) => {
+        if (value !== null && value !== undefined && value !== "") {
+          target.searchParams.set(key, value);
+        }
+      });
+    }
+    const controller = typeof AbortController === "function"
+      ? new AbortController() : null;
+    const timer = controller && timeoutMs !== 0
+      ? setTimeout(() => controller.abort(), timeoutMs || 3000) : null;
+    try {
+      const opts = {
+        cache: "no-store",
+        credentials: "omit",
+        ...(init || {}),
+      };
+      if (controller) opts.signal = controller.signal;
+      const res = await nativeFetch(target.href, opts);
+      if (!res.ok) {
+        if (res.status >= 500 || res.status === 429) {
+          galleryDownUntil = Date.now() + 30000;
+        }
+        return null;
+      }
+      return await res.json();
+    } catch (_) {
+      // One short outage: stay on the static path for 30 s, then retry.
+      galleryDownUntil = Date.now() + 30000;
+      return null;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  function galleryEdit(ops, baseRev, keepalive) {
+    if (!galleryReady() || !ops || !ops.length) return Promise.resolve(null);
+    const headers = { "Content-Type": "application/json" };
+    if (baseRev) headers["If-Match"] = `"${baseRev}"`;
+    return galleryJson("/api/edits", null, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ ops, base_rev: baseRev || 0 }),
+      keepalive: !!keepalive,
+    }, keepalive ? 0 : 6000);
+  }
 
   // ---- gated media ------------------------------------------------------
   // Media URLs are rewritten through the HF proxy, which requires both the
@@ -996,7 +1064,24 @@
     const api = url.pathname.slice(marker + 5);
     const method = (options.method || "GET").toUpperCase();
 
+    if (api === "edits") {
+      if (method !== "POST") return json({ error: "method not allowed" }, 405);
+      const headers = new Headers(options.headers || {});
+      headers.set("Content-Type", "application/json");
+      const remote = await galleryJson("/api/edits", null, {
+        method: "POST",
+        headers,
+        body: options.body,
+        keepalive: !!options.keepalive,
+      }, options.keepalive ? 0 : 8000);
+      if (remote) return json(remote);
+      return json({ error: "gallery edits endpoint unavailable" }, 503);
+    }
     if (api === "accounts") {
+      if (method === "GET") {
+        const remote = await galleryJson("/api/accounts", url.searchParams, {}, 3000);
+        if (remote && Array.isArray(remote.accounts)) return json(remote);
+      }
       if (window.SAVED_ACCOUNTS) return json(window.SAVED_ACCOUNTS);
       return json({ accounts: [{
         id: "instagram-static", platform: "instagram", label: "Instagram",
@@ -1004,6 +1089,9 @@
       }], active: "instagram-static" });
     }
     if (api === "facets") {
+      const remote = await galleryJson("/api/facets", url.searchParams, {}, 3000);
+      if (remote && (Array.isArray(remote.category_list)
+        || Array.isArray(remote.categories))) return json(remote);
       return json(facetsFor(currentSource(url.searchParams), currentPlatform(url.searchParams)));
     }
     if (api === "categories") {
@@ -1088,6 +1176,8 @@
     }
     if (api === "posts") {
       const params = url.searchParams;
+      const remote = await galleryJson("/api/posts", params, {}, 4000);
+      if (remote && Array.isArray(remote.items)) return json(remote);
       const all = sorted(filtered(params), params.get("sort") || "manual");
       const offset = Number(params.get("offset") || 0);
       const limit = Math.min(Number(params.get("limit") || 60), 120);
@@ -1098,6 +1188,10 @@
       const post = posts.find((p) => p.id === Number(m[1]));
       if (!post) return json({ error: "not found" }, 404);
       const out = { ...post, caption: post.caption_full || post.caption || "", media: post.media || [] };
+      if (method === "GET") {
+        const remote = await galleryJson(`/api/post/${m[1]}`, url.searchParams, {}, 3000);
+        if (remote && remote.id !== undefined) return json(remote);
+      }
       if (method === "POST") {
         try {
           const payload = JSON.parse(options.body || "{}");
@@ -1120,6 +1214,13 @@
             patch.tags = payload.tags;
           }
           saveOverride(post, patch);
+          // Mirror the edit through the gallery Worker (batched endpoint);
+          // the local + state push above remains the fallback.
+          galleryEdit([{
+            id: Number(post.id),
+            patch,
+            t: Date.now(),
+          }], sync.d1Rev).catch(() => {});
         } catch (_) {}
         return json({ ok: true });
       }
@@ -1153,6 +1254,7 @@
         const payload = JSON.parse(options.body || "{}");
         const category = String(payload.category || "").trim();
         const clearing = !category || payload.clear;
+        const workerOps = [];
         if (clearing) {
           (payload.ids || []).forEach((id) => {
             const post = posts.find((p) => p.id === Number(id));
@@ -1160,7 +1262,9 @@
             post.categories = [];
             post.category = null;
             saveOverride(post, { categories: [] });
+            workerOps.push({ id: Number(post.id), patch: { categories: [] }, t: Date.now() });
           });
+          if (workerOps.length) galleryEdit(workerOps, sync.d1Rev).catch(() => {});
           return json({ ok: true });
         }
         if (category) {
@@ -1174,7 +1278,11 @@
           post.categories = [...new Set([...cats(post), category])];
           post.category = post.categories[0] || null;
           saveOverride(post, { categories: post.categories });
+          workerOps.push({
+            id: Number(post.id), patch: { categories: post.categories }, t: Date.now(),
+          });
         });
+        if (workerOps.length) galleryEdit(workerOps, sync.d1Rev).catch(() => {});
       } catch (_) {}
       return json({ ok: true });
     }
