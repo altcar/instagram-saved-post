@@ -2,7 +2,7 @@
 (() => {
   window.__STATIC = true;
   const nativeFetch = window.fetch.bind(window);
-  const ready = nativeFetch("manifest.json?nc=202611261504", { cache: "no-store" })
+  const ready = nativeFetch("manifest.json?nc=202611261510", { cache: "no-store" })
     .then((r) => r.json())
     .then(async (data) => {
       posts = data.posts || [];
@@ -358,6 +358,7 @@
 
   function migrateLegacyRegistry(doc) {
     const legacy = legacyCategories(doc);
+    if (!legacy.length) return { platforms: {}, t: 0, pt: {} };
     const t = Number(doc && doc.__cat_t) || Date.now();
     const platforms = {};
     const used = new Set();
