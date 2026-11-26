@@ -2,7 +2,7 @@
 (() => {
   window.__STATIC = true;
   const nativeFetch = window.fetch.bind(window);
-  const ready = nativeFetch("manifest.json?nc=202611261714", { cache: "no-store" })
+  const ready = nativeFetch("manifest.json?nc=202611261758", { cache: "no-store" })
     .then((r) => r.json())
     .then(async (data) => {
       posts = data.posts || [];
@@ -1548,7 +1548,16 @@
     if (api === "posts") {
       const params = url.searchParams;
       const remote = await galleryJson("/api/posts", params, {}, 4000);
-      if (remote && Array.isArray(remote.items)) return json(remote);
+      if (remote && Array.isArray(remote.items)) {
+        // The gallery Worker returns direct Hugging Face URLs.  Once the
+        // datasets are gated those 401, so rewrite every item through the
+        // signed media proxy (same rewrite the static manifest gets).
+        if (MEDIA_PROXY) {
+          await loadMediaTokens().catch(() => {});
+          remote.items.forEach(rewritePostMedia);
+        }
+        return json(remote);
+      }
       const all = sorted(filtered(params), params.get("sort") || "manual");
       const offset = Number(params.get("offset") || 0);
       const limit = Math.min(Number(params.get("limit") || 60), 120);
@@ -1561,7 +1570,13 @@
       const out = { ...post, caption: post.caption_full || post.caption || "", media: post.media || [] };
       if (method === "GET") {
         const remote = await galleryJson(`/api/post/${m[1]}`, url.searchParams, {}, 3000);
-        if (remote && remote.id !== undefined) return json(remote);
+        if (remote && remote.id !== undefined) {
+          if (MEDIA_PROXY) {
+            await loadMediaTokens().catch(() => {});
+            rewritePostMedia(remote);
+          }
+          return json(remote);
+        }
       }
       if (method === "POST") {
         try {
