@@ -2,7 +2,7 @@
 (() => {
   window.__STATIC = true;
   const nativeFetch = window.fetch.bind(window);
-  const ready = nativeFetch("manifest.json?nc=202611261510", { cache: "no-store" })
+  const ready = nativeFetch("manifest.json?nc=202611261513", { cache: "no-store" })
     .then((r) => r.json())
     .then(async (data) => {
       posts = data.posts || [];
@@ -365,7 +365,9 @@
     posts.forEach((post) => {
       const key = platformKey(post.platform);
       if (!key) return;
-      const override = doc && doc.overrides && doc.overrides[post.id];
+      const override = doc && (
+        (doc.overrides && doc.overrides[post.id]) || doc[post.id]
+      );
       const names = override && Array.isArray(override.categories)
         ? override.categories : cats(post);
       names.forEach((raw) => {
