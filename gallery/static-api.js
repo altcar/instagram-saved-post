@@ -2,7 +2,7 @@
 (() => {
   window.__STATIC = true;
   const nativeFetch = window.fetch.bind(window);
-  const ready = nativeFetch("manifest.json?nc=202611261447", { cache: "no-store" })
+  const ready = nativeFetch("manifest.json?nc=202611261504", { cache: "no-store" })
     .then((r) => r.json())
     .then(async (data) => {
       posts = data.posts || [];
@@ -51,6 +51,14 @@
     let target;
     try { target = new URL(GALLERY_API.replace(/\/+$/, "") + path); }
     catch (_) { return null; }
+    // The Worker cannot see this page's query string.  Seed source/platform
+    // (and any other route params) so /api/posts and /api/facets stay scoped
+    // to the gallery the iframe is showing.
+    try {
+      new URLSearchParams(location.search).forEach((value, key) => {
+        target.searchParams.set(key, value);
+      });
+    } catch (_) {}
     if (params) {
       const entries = typeof params.forEach === "function"
         ? (() => { const out = []; params.forEach((v, k) => out.push([k, v])); return out; })()
@@ -257,6 +265,199 @@
     sync.lastError = String(err && err.message || err || "sync failed");
   }
 
+  const REGISTRY_PLATFORMS = ["instagram", "x", "threads", "reddit", "rednote"];
+  const REGISTRY_RESERVED = new Set([
+    "platforms", "t", "pt", "platform_t", "version", "updated_at",
+    "migrated_from", "migrated_at",
+  ]);
+
+  function platformKey(value) {
+    const text = String(value === undefined || value === null ? "" : value)
+      .trim().toLowerCase();
+    if (!text || text === "all" || text === "__all__") return "";
+    if (text === "twitter" || text === "x") return "x";
+    if (text === "ig") return "instagram";
+    if (text === "rednote-main") return "rednote";
+    return /^[a-z0-9_-]{1,32}$/.test(text) ? text : "";
+  }
+
+  function platformFromSource(source) {
+    const key = String(source || "").toLowerCase();
+    if (!key || key === "all" || key === "__all__") return "";
+    const post = posts.find((p) => p.source === key || p.platform === key);
+    return platformKey((post && post.platform) || key);
+  }
+
+  function cleanPlatforms(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    const out = {};
+    Object.entries(value).forEach(([rawKey, rawNames]) => {
+      const key = platformKey(rawKey);
+      if (!key || REGISTRY_RESERVED.has(key)) return;
+      out[key] = (Array.isArray(rawNames) ? rawNames : [])
+        .map((name) => String(name || "").trim())
+        .filter((name, index, list) => name && list.indexOf(name) === index);
+    });
+    return out;
+  }
+
+  function cleanPlatformTimes(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    const out = {};
+    Object.entries(value).forEach(([rawKey, rawTime]) => {
+      const key = platformKey(rawKey);
+      const time = Number(rawTime) || 0;
+      if (key && time) out[key] = time;
+    });
+    return out;
+  }
+
+  function registryFromDoc(doc) {
+    if (!doc || typeof doc !== "object" || Array.isArray(doc)) return null;
+    let raw = doc.__category_registry;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      raw = doc.category_registry;
+    }
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const nested = !!(raw.platforms && typeof raw.platforms === "object"
+      && !Array.isArray(raw.platforms));
+    const platforms = cleanPlatforms(nested ? raw.platforms : raw);
+    if (!nested && !Object.keys(platforms).length) return null;
+    let t = 0;
+    let pt = {};
+    if (nested) {
+      if (raw.t && typeof raw.t === "object") pt = cleanPlatformTimes(raw.t);
+      else t = Number(raw.t) || 0;
+      pt = { ...pt, ...cleanPlatformTimes(raw.pt) };
+      pt = { ...pt, ...cleanPlatformTimes(raw.platform_t) };
+    }
+    const docT = doc.__category_registry_t;
+    if (docT && typeof docT === "object") pt = { ...pt, ...cleanPlatformTimes(docT) };
+    else t = t || Number(docT) || 0;
+    pt = { ...pt, ...cleanPlatformTimes(doc.__category_registry_platform_t) };
+    if (!t) t = Number(doc.__cat_t) || 0;
+    return { platforms, t, pt };
+  }
+
+  function legacyCategories(doc) {
+    const list = (doc && (doc.__category_order || doc.__categories)) || [];
+    return (Array.isArray(list) ? list : [])
+      .map((name) => String(name || "").trim())
+      .filter((name, index, all) => name && all.indexOf(name) === index);
+  }
+
+  function unionPlatforms(platforms) {
+    const out = [];
+    Object.values(platforms || {}).forEach((names) => {
+      (names || []).forEach((name) => {
+        if (!out.includes(name)) out.push(name);
+      });
+    });
+    return out;
+  }
+
+  function migrateLegacyRegistry(doc) {
+    const legacy = legacyCategories(doc);
+    const t = Number(doc && doc.__cat_t) || Date.now();
+    const platforms = {};
+    const used = new Set();
+    posts.forEach((post) => {
+      const key = platformKey(post.platform);
+      if (!key) return;
+      const override = doc && doc.overrides && doc.overrides[post.id];
+      const names = override && Array.isArray(override.categories)
+        ? override.categories : cats(post);
+      names.forEach((raw) => {
+        const name = String(raw || "").trim();
+        if (!name || !legacy.includes(name)) return;
+        const bucket = platforms[key] || (platforms[key] = []);
+        if (!bucket.includes(name)) bucket.push(name);
+        used.add(name);
+      });
+    });
+    const unknown = legacy.filter((name) => !used.has(name));
+    if (unknown.length && !Object.keys(platforms).length) {
+      platforms.instagram = unknown.slice();
+    }
+    REGISTRY_PLATFORMS.forEach((key) => {
+      if (!(key in platforms)) platforms[key] = [];
+    });
+    const pt = {};
+    Object.keys(platforms).forEach((key) => { pt[key] = t; });
+    return { platforms, t, pt };
+  }
+
+  function registryTime(registry, key) {
+    if (!registry) return 0;
+    return Number(registry.pt && registry.pt[key]) || Number(registry.t) || 0;
+  }
+
+  function mergeRegistries(a, b, mergedOverrides) {
+    const left = registryFromDoc(a);
+    const right = registryFromDoc(b);
+    if (!left && !right) {
+      const at = Number(a.__cat_t || 0);
+      const bt = Number(b.__cat_t || 0);
+      let legacy;
+      if (at > bt) legacy = legacyCategories(a);
+      else if (bt > at) legacy = legacyCategories(b);
+      else {
+        legacy = legacyCategories(a);
+        legacyCategories(b).forEach((name) => {
+          if (!legacy.includes(name)) legacy.push(name);
+        });
+      }
+      if (!legacy.length) return null;
+      return migrateLegacyRegistry({
+        ...a, ...b,
+        overrides: mergedOverrides,
+        __category_order: legacy,
+        __categories: legacy,
+        __cat_t: Math.max(at, bt) || Date.now(),
+      });
+    }
+    const l = left || { platforms: {}, t: 0, pt: {} };
+    const r = right || { platforms: {}, t: 0, pt: {} };
+    if (!left) {
+      const seed = migrateLegacyRegistry(a);
+      Object.entries(seed.platforms).forEach(([key, names]) => {
+        if (!(key in l.platforms)) {
+          l.platforms[key] = names;
+          l.pt[key] = seed.pt[key] || seed.t;
+          l.t = Math.max(l.t, seed.t);
+        }
+      });
+    }
+    if (!right) {
+      const seed = migrateLegacyRegistry(b);
+      Object.entries(seed.platforms).forEach(([key, names]) => {
+        if (!(key in r.platforms)) {
+          r.platforms[key] = names;
+          r.pt[key] = seed.pt[key] || seed.t;
+          r.t = Math.max(r.t, seed.t);
+        }
+      });
+    }
+    const platforms = {};
+    const pt = {};
+    new Set([...Object.keys(l.platforms), ...Object.keys(r.platforms)]).forEach((key) => {
+      const lHas = Object.prototype.hasOwnProperty.call(l.platforms, key);
+      const rHas = Object.prototype.hasOwnProperty.call(r.platforms, key);
+      const lt = registryTime(l, key);
+      const rt = registryTime(r, key);
+      if (lHas && rHas) {
+        if (left && !right) platforms[key] = l.platforms[key];
+        else if (!left && right) platforms[key] = r.platforms[key];
+        else platforms[key] = rt >= lt ? r.platforms[key] : l.platforms[key];
+      } else if (rHas) platforms[key] = r.platforms[key];
+      else platforms[key] = l.platforms[key];
+      const stamp = lHas && rHas ? Math.max(lt, rt) : (rHas ? rt : lt);
+      if (stamp) pt[key] = stamp;
+    });
+    const t = Math.max(l.t, r.t, ...Object.values(pt));
+    return { platforms, t, pt };
+  }
+
   function mergeDocs(left, right) {
     const a = left || {};
     const b = right || {};
@@ -274,17 +475,7 @@
       const ty = Number(y.t || 0);
       merged[key] = ty > tx ? { ...x, ...y } : { ...y, ...x };
     });
-    const at = Number(a.__cat_t || 0);
-    const bt = Number(b.__cat_t || 0);
-    let order;
-    if (at > bt) order = a.__category_order || a.__categories || [];
-    else if (bt > at) order = b.__category_order || b.__categories || [];
-    else {
-      order = [...(a.__category_order || a.__categories || [])];
-      (b.__category_order || b.__categories || []).forEach((c) => {
-        if (!order.includes(c)) order.push(c);
-      });
-    }
+    const registry = mergeRegistries(a, b, merged);
     // Manual order is a permutation, so the newest list wins outright.
     const aot = Number(a.__order_t || 0);
     const bot = Number(b.__order_t || 0);
@@ -297,9 +488,32 @@
       manual = r.length >= l.length ? r : l;
     }
     const out = { ...a, ...b, overrides: merged };
-    out.__categories = order.filter(Boolean);
-    out.__category_order = out.__categories;
-    out.__cat_t = Math.max(at, bt);
+    if (registry) {
+      out.__category_registry = registry.platforms;
+      out.__category_registry_v = 2;
+      out.__category_registry_t = registry.t || Date.now();
+      if (Object.keys(registry.pt).length) {
+        out.__category_registry_platform_t = registry.pt;
+      }
+      out.__categories = unionPlatforms(registry.platforms);
+      out.__category_order = out.__categories;
+      out.__cat_t = out.__category_registry_t;
+    } else {
+      const at = Number(a.__cat_t || 0);
+      const bt = Number(b.__cat_t || 0);
+      let order;
+      if (at > bt) order = legacyCategories(a);
+      else if (bt > at) order = legacyCategories(b);
+      else {
+        order = legacyCategories(a);
+        legacyCategories(b).forEach((name) => {
+          if (!order.includes(name)) order.push(name);
+        });
+      }
+      out.__categories = order;
+      out.__category_order = order;
+      out.__cat_t = Math.max(at, bt);
+    }
     if (manual && manual.length) out.__order = manual;
     if (aot || bot) out.__order_t = Math.max(aot, bot);
     out.__updated_at = new Date().toISOString();
@@ -307,16 +521,22 @@
   }
 
   function stateToOverrides(state) {
-    const out = { overrides: {}, categories: [] };
+    const out = { overrides: {} };
     const byKey = {};
     posts.forEach((p) => {
       byKey[p.folder || p.pk || String(p.id)] = p;
     });
     const sources = (state && state.sources) || {};
+    const registryByPlatform = {};
     Object.values(sources).forEach((src) => {
-      (src.categories || []).forEach((c) => {
-        if (!out.categories.includes(c)) out.categories.push(c);
-      });
+      const platform = platformKey(src.platform || "");
+      if (platform) {
+        const bucket = registryByPlatform[platform] || (registryByPlatform[platform] = []);
+        (src.categories || []).forEach((raw) => {
+          const name = String(raw || "").trim();
+          if (name && !bucket.includes(name)) bucket.push(name);
+        });
+      }
       const assign = src.assignments || {};
       const notes = src.notes || {};
       const tags = src.tags || {};
@@ -341,30 +561,81 @@
           }
         }
         if (Object.keys(patch).length) {
+          if (post.platform) patch.platform = post.platform;
+          if (post.folder) patch.folder = String(post.folder);
           out.overrides[post.id] = { ...(out.overrides[post.id] || {}), ...patch };
         }
       });
     });
-    // Carry the registry so a gist export alone still seeds the category bar.
-    if (out.categories.length) {
-      out.__categories = out.categories.slice();
-      out.__category_order = out.categories.slice();
+    const stateRegistry = state && state.category_registry;
+    if (stateRegistry && typeof stateRegistry === "object" && !Array.isArray(stateRegistry)) {
+      Object.entries(stateRegistry).forEach(([key, names]) => {
+        const platform = platformKey(key);
+        if (!platform) return;
+        registryByPlatform[platform] = (Array.isArray(names) ? names : [])
+          .map((name) => String(name || "").trim())
+          .filter(Boolean);
+      });
+    }
+    // Carry per-platform registries so a gist export alone still seeds the
+    // category bars without sharing X's categories with Reddit.
+    if (Object.keys(registryByPlatform).length) {
       const stamp = Date.parse((state && state.updated_at) || "");
-      out.__cat_t = Number.isFinite(stamp) ? stamp : 1;
+      const t = Number.isFinite(stamp) ? stamp : Date.now();
+      out.__category_registry = registryByPlatform;
+      out.__category_registry_v = 2;
+      out.__category_registry_t = t;
+      out.__category_registry_platform_t = {};
+      Object.keys(registryByPlatform).forEach((key) => {
+        out.__category_registry_platform_t[key] = t;
+      });
+      out.__categories = unionPlatforms(registryByPlatform);
+      out.__category_order = out.__categories.slice();
+      out.__cat_t = t;
     }
     return out;
   }
 
   function adoptDoc(doc) {
+    doc = doc || {};
     overrides = doc.overrides || {};
-    overrides.__categories = doc.__categories || [];
-    overrides.__category_order = doc.__category_order || overrides.__categories;
-    overrides.__cat_t = doc.__cat_t || overrides.__cat_t || 0;
+    let registry = registryFromDoc(doc);
+    if (!registry && legacyCategories(doc).length) {
+      registry = migrateLegacyRegistry(doc);
+    }
+    if (registry) {
+      overrides.__category_registry = registry.platforms;
+      overrides.__category_registry_v = 2;
+      overrides.__category_registry_t = registry.t || Date.now();
+      if (Object.keys(registry.pt).length) {
+        overrides.__category_registry_platform_t = registry.pt;
+      }
+      overrides.__categories = unionPlatforms(registry.platforms);
+      overrides.__category_order = overrides.__categories.slice();
+      overrides.__cat_t = overrides.__category_registry_t;
+    } else {
+      overrides.__categories = doc.__categories || [];
+      overrides.__category_order = doc.__category_order || overrides.__categories;
+      overrides.__cat_t = doc.__cat_t || overrides.__cat_t || 0;
+    }
     if (Array.isArray(doc.__order) && doc.__order.length) {
       overrides.__order = doc.__order;
       overrides.__order_t = doc.__order_t || overrides.__order_t || 0;
     }
     localStorage.setItem(STORE, JSON.stringify(overrides));
+  }
+
+  function copyRegistryFields(target, source) {
+    if (!source) return target;
+    if (source.__category_registry) {
+      target.__category_registry = source.__category_registry;
+      target.__category_registry_v = source.__category_registry_v || 2;
+      target.__category_registry_t = source.__category_registry_t || 0;
+      if (source.__category_registry_platform_t) {
+        target.__category_registry_platform_t = source.__category_registry_platform_t;
+      }
+    }
+    return target;
   }
 
   async function loadCloud(force) {
@@ -458,7 +729,7 @@
   }
 
   function syncDoc() {
-    return {
+    const doc = {
       overrides,
       __categories: overrides.__categories || overrides.__category_order || [],
       __category_order: overrides.__category_order || overrides.__categories || [],
@@ -467,6 +738,17 @@
       __order_t: overrides.__order_t || 0,
       updated_at: new Date().toISOString(),
     };
+    if (overrides.__category_registry
+      && typeof overrides.__category_registry === "object") {
+      doc.__category_registry = overrides.__category_registry;
+      doc.__category_registry_v = 2;
+      doc.__category_registry_t = Number(overrides.__category_registry_t) || 0;
+      if (overrides.__category_registry_platform_t) {
+        doc.__category_registry_platform_t =
+          overrides.__category_registry_platform_t;
+      }
+    }
+    return doc;
   }
 
   async function pushD1(revAtSend, keepalive) {
@@ -504,15 +786,7 @@
       // what this tab already has without clobbering edits made during the POST.
       const merged = mergeDocs({ overrides, __order: overrides.__order,
         __order_t: overrides.__order_t }, data.doc);
-      overrides = { ...merged.overrides,
-        __categories: merged.__categories,
-        __category_order: merged.__category_order,
-        __cat_t: merged.__cat_t };
-      if (Array.isArray(merged.__order) && merged.__order.length) {
-        overrides.__order = merged.__order;
-        overrides.__order_t = merged.__order_t || overrides.__order_t || 0;
-      }
-      localStorage.setItem(STORE, JSON.stringify(overrides));
+      adoptDoc(merged);
     }
     sync.d1Rev = Math.max(sync.d1Rev, revAtSend);
     sync.lastD1 = Date.now();
@@ -775,8 +1049,15 @@
   }
 
   function currentPlatform(params) {
-    return String((params && params.get("platform"))
+    const raw = String((params && params.get("platform"))
       || new URLSearchParams(location.search).get("platform") || "").toLowerCase();
+    return raw === "twitter" ? "x" : raw;
+  }
+
+  function registryPlatform(params) {
+    const direct = platformKey(currentPlatform(params));
+    if (direct) return direct;
+    return platformFromSource(currentSource(params));
   }
 
   function sourceItems(source, platform) {
@@ -788,7 +1069,18 @@
     return posts.filter((p) => p.source === source || p.platform === source);
   }
 
-  function registry() {
+  function registry(platform) {
+    const key = platformKey(platform);
+    const map = overrides.__category_registry;
+    if (map && typeof map === "object" && !Array.isArray(map)) {
+      if (!key) return unionPlatforms(map);
+      if (Object.prototype.hasOwnProperty.call(map, key)) {
+        return (Array.isArray(map[key]) ? map[key] : []).slice();
+      }
+      // The registry is authoritative: never fall back to another platform's
+      // categories when this platform has an empty/missing entry.
+      return [];
+    }
     if (Array.isArray(overrides.__category_order)) {
       return overrides.__category_order.filter((c) => typeof c === "string");
     }
@@ -796,17 +1088,42 @@
       return overrides.__categories.filter((c) => typeof c === "string");
     }
     const names = [];
-    posts.forEach((p) => cats(p).forEach((c) => { if (!names.includes(c)) names.push(c); }));
+    posts.forEach((p) => {
+      if (key && platformKey(p.platform) !== key) return;
+      cats(p).forEach((c) => { if (!names.includes(c)) names.push(c); });
+    });
     return names;
   }
 
-  function saveRegistry(names) {
+  function saveRegistry(names, platform) {
+    const key = platformKey(platform || registryPlatform());
+    if (!key) return;
     const next = names.filter(Boolean);
-    const prev = overrides.__category_order || overrides.__categories || [];
+    let map = overrides.__category_registry;
+    let pt = overrides.__category_registry_platform_t || {};
+    if (!map || typeof map !== "object" || Array.isArray(map)
+      || !Object.keys(map).length) {
+      const legacy = legacyCategories(overrides);
+      if (legacy.length) {
+        const migrated = migrateLegacyRegistry(overrides);
+        map = migrated.platforms;
+        pt = migrated.pt;
+      } else {
+        map = {};
+      }
+    }
+    const prev = Array.isArray(map[key]) ? map[key] : [];
     if (next.length === prev.length && next.every((c, i) => c === prev[i])) return;
-    overrides.__category_order = next;
-    overrides.__categories = next;
-    overrides.__cat_t = Date.now();
+    map = { ...map, [key]: next };
+    const now = Date.now();
+    overrides.__category_registry = map;
+    overrides.__category_registry_v = 2;
+    overrides.__category_registry_t = Math.max(
+      Number(overrides.__category_registry_t) || 0, now);
+    overrides.__category_registry_platform_t = { ...pt, [key]: now };
+    overrides.__categories = unionPlatforms(map);
+    overrides.__category_order = overrides.__categories.slice();
+    overrides.__cat_t = overrides.__category_registry_t;
     localStorage.setItem(STORE, JSON.stringify(overrides));
     markDirty();
   }
@@ -815,9 +1132,9 @@
     markDirty();
   }
 
-  function categoryCounts(items) {
+  function categoryCounts(items, platform) {
     const counts = {};
-    registry().forEach((c) => { counts[c] = 0; });
+    registry(platform).forEach((c) => { counts[c] = 0; });
     items.forEach((p) => cats(p).forEach((c) => {
       counts[c] = (counts[c] || 0) + 1;
     }));
@@ -843,9 +1160,10 @@
   }
 
   function facetsFor(source, platform) {
-    const items = sourceItems(source, platform);
-    const counts = categoryCounts(items);
-    const names = registry();
+    const key = platformKey(platform) || platformFromSource(source);
+    const items = sourceItems(source, key);
+    const counts = categoryCounts(items, key);
+    const names = registry(key);
     const catList = names.map((name) => ({ name, count: counts[name] || 0 }));
     const tagCounts = {};
     const suggestedCounts = {};
@@ -876,6 +1194,7 @@
       suggested: asList(suggestedCounts),
       post_tags: asList(postTagCounts),
       presets: names.length ? names : (db.facets.presets || []),
+      platform: key || "all",
       saved: { still_saved: 0, already_unsaved: items.length },
       stats: { comments: items.reduce((n, p) => n + (p.comments_count || 0), 0) },
     };
@@ -1096,23 +1415,66 @@
     }
     if (api === "categories") {
       const src = currentSource(url.searchParams);
+      let payload = {};
       if (method === "POST") {
-        let payload = {};
         try { payload = JSON.parse(options.body || "{}"); } catch (_) {}
+      }
+      const platform = platformKey(payload.platform) || registryPlatform(url.searchParams);
+      const adoptRemoteRegistry = (remote) => {
+        const reg = remote && remote.registry;
+        if (!reg || !reg.platforms || typeof reg.platforms !== "object") return;
+        overrides.__category_registry = reg.platforms;
+        overrides.__category_registry_v = 2;
+        overrides.__category_registry_t = reg.t || Date.now();
+        if (reg.pt) overrides.__category_registry_platform_t = reg.pt;
+        overrides.__categories = unionPlatforms(reg.platforms);
+        overrides.__category_order = overrides.__categories.slice();
+        overrides.__cat_t = overrides.__category_registry_t;
+        localStorage.setItem(STORE, JSON.stringify(overrides));
+      };
+      if (method === "GET") {
+        const remote = await galleryJson("/api/categories", url.searchParams, {}, 3000);
+        if (remote && Array.isArray(remote.category_list)) {
+          adoptRemoteRegistry(remote);
+          return json(remote);
+        }
+        const f = facetsFor(src, platform);
+        return json({
+          platform: platform || "all",
+          registry: registry(platform),
+          categories: f.category_list,
+          category_list: f.category_list,
+          uncategorised: f.filter_counts.uncategorised,
+        });
+      }
+      if (method === "POST") {
+        if (platform && galleryReady()) {
+          const remote = await galleryJson("/api/categories", url.searchParams, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...payload, platform, source: src }),
+          }, 8000);
+          if (remote && remote.ok) {
+            adoptRemoteRegistry(remote);
+            return json(remote);
+          }
+        }
         const op = String(payload.op || "");
         const name = String(payload.name || "").trim();
-        let names = registry().slice();
+        let names = registry(platform).slice();
         const updatePosts = (fn) => {
           posts.forEach((p) => {
-            if (!src || p.source === src || p.platform === src) {
-              const before = cats(p);
-              const next = fn(before);
-              if (sameValue(before, next)) return;  // leave untouched posts alone
-              p.categories = next;
-              p.category = next[0] || null;
-              overrides[p.id] = { ...(overrides[p.id] || {}), categories: next,
-                category: next[0] || null, t: Date.now() };
-            }
+            const matchesPlatform = platform
+              ? platformKey(p.platform) === platform
+              : (!src || p.source === src || p.platform === src);
+            if (!matchesPlatform) return;
+            const before = cats(p);
+            const next = fn(before);
+            if (sameValue(before, next)) return;  // leave untouched posts alone
+            p.categories = next;
+            p.category = next[0] || null;
+            overrides[p.id] = { ...(overrides[p.id] || {}), categories: next,
+              category: next[0] || null, t: Date.now() };
           });
         };
         if (op === "add" && name && !names.includes(name)) names.push(name);
@@ -1132,13 +1494,19 @@
           names = wanted.filter((c) => names.includes(c))
             .concat(names.filter((c) => !wanted.includes(c)));
         }
-        saveRegistry(names);
+        saveRegistry(names, platform);
         localStorage.setItem(STORE, JSON.stringify(overrides));
-        return json({ categories: facetsFor(src, currentPlatform(url.searchParams)).category_list,
-          uncategorised: facetsFor(src, currentPlatform(url.searchParams)).filter_counts.uncategorised });
+        const f = facetsFor(src, platform);
+        return json({
+          ok: true,
+          platform: platform || "all",
+          registry: names,
+          categories: f.category_list,
+          category_list: f.category_list,
+          uncategorised: f.filter_counts.uncategorised,
+        });
       }
-      const f = facetsFor(currentSource(url.searchParams), currentPlatform(url.searchParams));
-      return json({ categories: f.category_list, uncategorised: f.filter_counts.uncategorised });
+      return json({ error: "method not allowed" }, 405);
     }
     if (api === "cloud") {
       if (method === "POST") {
@@ -1253,6 +1621,7 @@
       try {
         const payload = JSON.parse(options.body || "{}");
         const category = String(payload.category || "").trim();
+        const platform = platformKey(payload.platform) || registryPlatform(url.searchParams);
         const clearing = !category || payload.clear;
         const workerOps = [];
         if (clearing) {
@@ -1267,9 +1636,16 @@
           if (workerOps.length) galleryEdit(workerOps, sync.d1Rev).catch(() => {});
           return json({ ok: true });
         }
-        if (category) {
-          const names = registry();
-          if (!names.includes(category)) saveRegistry([...names, category]);
+        if (category && platform) {
+          const names = registry(platform);
+          if (!names.includes(category)) {
+            saveRegistry([...names, category], platform);
+            galleryJson("/api/categories", url.searchParams, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ op: "add", platform, name: category }),
+            }, 6000).catch(() => {});
+          }
         }
         (payload.ids || []).forEach((id) => {
           const post = posts.find((p) => p.id === Number(id));
