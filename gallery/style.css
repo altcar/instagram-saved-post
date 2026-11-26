@@ -110,6 +110,15 @@ select{background:var(--panel);border:1px solid var(--line);border-radius:11px;
   padding:3px 8px;border-radius:999px;color:#dfe6f3;display:none}
 .catChip.on{display:inline-block;max-width:calc(100% - 18px);overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap;z-index:3}
+.sugChip{position:absolute;right:9px;top:9px;font-size:10px;letter-spacing:.2px;
+  background:rgba(20,26,38,.72);border:1px dashed #39455e;backdrop-filter:blur(4px);
+  padding:2px 7px;border-radius:999px;color:#9aa8c1;max-width:calc(100% - 18px);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;z-index:3}
+.sugChip[hidden]{display:none}
+.dTags .sugChip,.sugTags .sugChip{position:static;display:inline-block;border:1px dashed #39455e;
+  color:#93a1ba;background:#141a24;padding:2px 8px}
+.sugMeta,.sugNote{color:#8794ab;font-style:italic}
+.sugNote{text-transform:none;letter-spacing:0;font-size:10px}
 .dragHandle{position:absolute;right:9px;bottom:9px;padding:2px 7px;border-radius:7px;
   background:rgba(0,0,0,.55);color:#c9d3e6;font-size:12px;letter-spacing:-1px;display:none;cursor:grab}
 .grid.manual .dragHandle{display:block}

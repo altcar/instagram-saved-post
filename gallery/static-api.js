@@ -2,13 +2,15 @@
 (() => {
   window.__STATIC = true;
   const nativeFetch = window.fetch.bind(window);
-  const ready = nativeFetch("manifest.json?nc=202611260700", { cache: "no-store" })
+  const ready = nativeFetch("manifest.json?nc=202611261239", { cache: "no-store" })
     .then((r) => r.json())
     .then(async (data) => {
       posts = data.posts || [];
       window.__STATIC_POSTS = posts;
       await loadCloud();
       posts.forEach(applyOverride);
+      await loadMediaTokens();
+      posts.forEach(rewritePostMedia);
       // A previous session may have died before its last write landed (or the
       // page was closed while workers.dev was unreachable).  The pending
       // revision is persisted in localStorage, so resume it on load.
@@ -19,28 +21,44 @@
   const CLOUD = window.SAVED_CLOUD || {};
   const GIST_ID = CLOUD.gistId || "5dc24371e7371776648695269b30cfd2";
   const GIST_FILE = CLOUD.gistFile || "static_overrides.json";
-  // The deployed site must work with no local server.  workers.dev + D1 is
-  // the primary state store even when config.js only carries the gist id;
-  // a browser can override it (or disable it with an empty value) in the
-  // Cloud sync panel.  Reads/writes of the "default" doc are allowed by the
-  // Worker itself from this origin, so no secret is shipped to a browser.
+  // The deployed site must work with no local server.  The state Worker
+  // (Gist-backed, no D1) is the primary store even when config.js only
+  // carries the gist id; a browser can override it (or disable it with an
+  // empty value) in the Cloud sync panel.  Reads/writes of the "default" doc
+  // are allowed by the Worker itself from this origin, so no secret ships to
+  // a browser.
   const D1_DEFAULT = CLOUD.d1Url || "https://ig-archive-state.hheylau.workers.dev/";
   let cloudToken = localStorage.getItem("ig_cloud_token") || CLOUD.token || "";
   const d1Stored = localStorage.getItem("ig_cloud_d1");
   let d1Url = d1Stored === null ? D1_DEFAULT : d1Stored;
   let d1Key = localStorage.getItem("ig_cloud_d1_key") || "";
+
+  // ---- gated media ------------------------------------------------------
+  // Media URLs are rewritten through the HF proxy, which requires both the
+  // site origin and a short-lived HMAC token.  If the proxy or the token
+  // endpoint is unreachable we keep the direct Hugging Face URL, so the site
+  // still works during cutover (while the dataset is public).
+  const MEDIA = CLOUD.media || {};
+  const MEDIA_PROXY = String(MEDIA.proxy
+    || "https://ig-archive-media.hheylau.workers.dev").replace(/\/+$/, "");
+  const MEDIA_TOKEN_URL = String(MEDIA.tokenUrl
+    || (d1Url ? d1Url.replace(/\/+$/, "") + "/media-token" : "")).replace(/\/+$/, "");
+  const MEDIA_REPOS = ["ig-archive-test", "ig-archive-nsfw"];
+  const MEDIA_PREFIXES = ["posts/", "threads/", "x/", "rednote/", "reddit/"];
+  const mediaTokens = {};
+  let mediaTokenExp = 0;
   let overrides = {};
   try { overrides = JSON.parse(localStorage.getItem(STORE) || "{}"); } catch (_) {}
 
   // ---- write-behind sync -------------------------------------------------
   // Local storage is always written first, so the UI never waits on a network
-  // round trip.  Cloud writes are coalesced and rate limited: D1 at most once
-  // per 30s, the gist at most once per 5 minutes (one commit per write), plus
+  // round trip.  Cloud writes are coalesced and rate limited: state Worker at most once
+  // per 30s, the gist directly at most once per 5 minutes (one commit per write), plus
   // one urgent flush when the tab is hidden.  A change made while typing is
   // therefore at most one write, no matter how many keystrokes it took.
   const SYNC = {
     idle: 5000,        // save 5s after the last edit
-    min: 30000,        // never more than one D1 write per 30s
+    min: 30000,        // never more than one state write per 30s
     max: 120000,       // a continuous editor still gets a write every 2 min
     gistMin: 300000,   // one gist commit per 5 min (max 288/day)
     gistHideMin: 15000,// urgent flush on tab hide needs 15s since last gist
@@ -91,12 +109,14 @@
     if (!sync.firstDirty) sync.firstDirty = sync.lastEdit;
     saveSyncState();
     scheduleFlush();
-    paintSyncButton();
   }
 
   function targetPending() {
     const pendingD1 = !!d1Url && sync.rev > sync.d1Rev;
-    const pendingGist = !!cloudToken && !!GIST_ID && sync.rev > sync.gistRev;
+    // When the state Worker is configured it is the single writer (it owns the
+    // Gist and the merge lock).  A legacy token in localStorage must not PATCH
+    // the same gist out of band and lose another tab's merge.
+    const pendingGist = !d1Url && !!cloudToken && !!GIST_ID && sync.rev > sync.gistRev;
     return { pendingD1, pendingGist };
   }
 
@@ -163,14 +183,10 @@
     sync.lastError = "";
     sync.lastOk = new Date().toISOString();
     saveSyncState();
-    paintSyncButton();
-    refreshSyncPanel();
   }
 
   function syncError(err) {
     sync.lastError = String(err && err.message || err || "sync failed");
-    paintSyncButton();
-    refreshSyncPanel();
   }
 
   function mergeDocs(left, right) {
@@ -303,8 +319,9 @@
       doc.__category_order = doc.__category_order || doc.__categories;
     }
 
-    // D1 is the fast primary. One read per page load is cheap and keeps
-    // different devices in sync even when the gist is rate limited.
+    // The state Worker (Gist) is the fast primary. One read per page load is
+    // cheap and keeps different devices in sync even when the gist is rate
+    // limited.
     if (d1Url) {
       try {
         const headers = d1Key ? { "X-Archive-Key": d1Key } : {};
@@ -405,13 +422,13 @@
       if (res.status === 401 || res.status === 403) {
         syncBackoff(retryAt || Date.now() + 15 * 60 * 1000, "d1");
         throw new Error(res.status === 401
-          ? "D1 key rejected" : "D1 write forbidden (key or origin)");
+          ? "state key rejected" : "state write forbidden (key or origin)");
       }
       if (res.status === 429 || res.status >= 500) {
         syncBackoff(retryAt || 0, "d1");
-        throw new Error(`D1 temporarily unavailable (${res.status})`);
+        throw new Error(`state Worker unavailable (${res.status})`);
       }
-      throw new Error(`D1 write failed (${res.status})`);
+      throw new Error(`state write failed (${res.status})`);
     }
     const data = await res.json().catch(() => null);
     if (data && data.doc && data.doc.overrides) {
@@ -477,13 +494,12 @@
     if (sync.inFlight) { scheduleFlush(); return; }
     const now = Date.now();
     const { pendingD1, pendingGist } = targetPending();
-    if (!pendingD1 && !pendingGist) { sync.firstDirty = 0; paintSyncButton(); return; }
+    if (!pendingD1 && !pendingGist) { sync.firstDirty = 0; return; }
     const d1Due = pendingD1 && now >= sync.nextD1;
     const gistDue = pendingGist && now >= sync.nextGist &&
       now - sync.lastGist >= (force ? SYNC.gistHideMin : SYNC.gistMin);
     if (!d1Due && !gistDue) { scheduleFlush(); return; }
     sync.inFlight = true;
-    paintSyncButton();
     const revAtSend = sync.rev;
     const sig = docHash();
     let firstErr = null;
@@ -520,8 +536,115 @@
       sync.inFlight = false;
       if (sync.rev > Math.max(sync.d1Rev, sync.gistRev)) scheduleFlush();
       else sync.firstDirty = 0;
-      paintSyncButton();
-      refreshSyncPanel();
+    }
+  }
+
+  function splitMediaUrl(raw) {
+    if (!raw || typeof raw !== "string") return null;
+    const hf = raw.match(/^https?:\/\/huggingface\.co\/datasets\/[^/]+\/(ig-archive-[a-z0-9-]+)\/resolve\/[^/]+\/(.+)$/);
+    if (hf) return { repo: hf[1], path: hf[2] };
+    if (!MEDIA_PROXY) return null;
+    try {
+      const url = new URL(raw, location.href);
+      if (url.origin !== new URL(MEDIA_PROXY).origin) return null;
+      const m = url.pathname.match(/^\/(ig-archive-[a-z0-9-]+)\/(.+)$/);
+      return m ? { repo: m[1], path: m[2] } : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function mediaPrefix(path) {
+    return MEDIA_PREFIXES.find((p) => path.startsWith(p)) || "";
+  }
+
+  async function loadMediaTokens(force) {
+    if (!MEDIA_PROXY || !MEDIA_TOKEN_URL) return;
+    if (!force && Object.keys(mediaTokens).length
+      && Date.now() / 1000 < mediaTokenExp - 300) return;
+    const combos = new Set();
+    const consider = (post, u) => {
+      const ref = splitMediaUrl(u);
+      if (!ref || !MEDIA_REPOS.includes(ref.repo)) return;
+      // A moved post may target the NSFW repo; mint that token too.
+      const target = mediaRefFor(post, ref);
+      const prefix = mediaPrefix(target.path);
+      if (prefix && MEDIA_REPOS.includes(target.repo)) {
+        combos.add(`${target.repo}|${prefix}`);
+      }
+    };
+    posts.forEach((p) => {
+      consider(p, p.thumb);
+      consider(p, p.cover);
+      consider(p, p.comments_url);
+      (p.media || []).forEach((m) => { consider(p, m.url); consider(p, m.thumb); });
+    });
+    if (!combos.size) return;
+    const results = await Promise.all([...combos].map(async (key) => {
+      const [repo, prefix] = key.split("|");
+      try {
+        const res = await nativeFetch(
+          `${MEDIA_TOKEN_URL}?repo=${encodeURIComponent(repo)}` +
+          `&prefix=${encodeURIComponent(prefix)}&ttl=21600`,
+          { cache: "no-store" });
+        if (!res.ok) return null;
+        const data = await res.json();
+        if (!data || !data.token || !data.exp) return null;
+        return { key, token: data.token, exp: Number(data.exp) };
+      } catch (_) {
+        return null;
+      }
+    }));
+    let minExp = 0;
+    results.filter(Boolean).forEach((r) => {
+      mediaTokens[r.key] = { token: r.token, exp: r.exp };
+      minExp = minExp ? Math.min(minExp, r.exp) : r.exp;
+    });
+    if (minExp) mediaTokenExp = minExp;
+  }
+
+  function proxiedMediaUrl(repo, path) {
+    if (!MEDIA_PROXY) return "";
+    const prefix = mediaPrefix(path);
+    const rec = mediaTokens[`${repo}|${prefix}`];
+    if (!rec || rec.exp * 1000 < Date.now()) return "";
+    return `${MEDIA_PROXY}/${repo}/${path}?t=${encodeURIComponent(rec.token)}`;
+  }
+
+  // A post moved to the NSFW repo carries nsfw_repo + nsfw_paths in its
+  // override.  Only recorded files are rewritten, so a partially failed move
+  // keeps the files that are still on ig-archive-test.
+  function mediaRefFor(post, ref) {
+    const o = overrides[post.id];
+    if (!o || !o.nsfw_repo) return ref;
+    if (o.nsfw_paths && typeof o.nsfw_paths === "object") {
+      const moved = o.nsfw_paths[ref.path];
+      return moved ? { repo: o.nsfw_repo, path: moved } : ref;
+    }
+    if (o.nsfw === true) return { repo: o.nsfw_repo, path: ref.path };
+    return ref;
+  }
+
+  function rewriteMediaUrl(post, raw) {
+    const ref = splitMediaUrl(raw);
+    if (!ref) return raw;
+    const target = mediaRefFor(post, ref);
+    const proxied = proxiedMediaUrl(target.repo, target.path);
+    if (proxied) return proxied;
+    // Fallback: direct HF URL.  Works while the dataset is still public.
+    return `https://huggingface.co/datasets/shalevlau/${target.repo}/resolve/main/${target.path}`;
+  }
+
+  function rewritePostMedia(post) {
+    if (post.thumb) post.thumb = rewriteMediaUrl(post, post.thumb);
+    if (post.cover) post.cover = rewriteMediaUrl(post, post.cover);
+    if (post.comments_url) post.comments_url = rewriteMediaUrl(post, post.comments_url);
+    if (Array.isArray(post.media)) {
+      post.media = post.media.map((m) => ({
+        ...m,
+        url: rewriteMediaUrl(post, m.url),
+        thumb: m.thumb ? rewriteMediaUrl(post, m.thumb) : m.thumb,
+      }));
     }
   }
 
@@ -545,6 +668,8 @@
       ...prev,
       ...patch,
       t: Date.now(),
+      ...(post.platform ? { platform: post.platform } : {}),
+      ...(post.folder ? { folder: String(post.folder) } : {}),
     };
     localStorage.setItem(STORE, JSON.stringify(overrides));
     markDirty();
@@ -792,125 +917,6 @@
     return items.sort((a, b) => savedRank(a) - savedRank(b) || a.id - b.id);
   }
 
-  function fmtWait(ms) {
-    const s = Math.max(1, Math.round(ms / 1000));
-    return s < 60 ? `${s}s` : `${Math.round(s / 60)}m`;
-  }
-
-  function syncLabel() {
-    const { pendingD1, pendingGist } = targetPending();
-    const pending = pendingD1 || pendingGist;
-    if (sync.inFlight) return "☁ Saving…";
-    if (!cloudToken && !d1Url) return "☁ Local only";
-    const now = Date.now();
-    const d1Locked = pendingD1 && sync.nextD1 > now;
-    const gistLocked = pendingGist && sync.nextGist > now;
-    const unlocked = (pendingD1 && !d1Locked) || (pendingGist && !gistLocked);
-    const locks = [d1Locked ? sync.nextD1 : 0, gistLocked ? sync.nextGist : 0]
-      .filter((t) => t > 0);
-    if (locks.length && !unlocked) {
-      return `☁ Retry ${fmtWait(Math.min(...locks) - now)}`;
-    }
-    if (pending) return "☁ Pending…";
-    return "☁ Saved";
-  }
-
-  function paintSyncButton() {
-    const el = document.getElementById("cloudSync");
-    if (!el) return;
-    el.textContent = syncLabel();
-    const { pendingD1, pendingGist } = targetPending();
-    el.title = !cloudToken && !d1Url
-      ? "Edits are saved in this browser. Click to configure gist/D1 cloud sync."
-      : `${pendingD1 || pendingGist ? "Waiting to save" : "All edits saved"}`
-        + ` · D1 at most 1 write/30s · gist at most 1 commit/5min`
-        + (sync.lastError ? ` · ${sync.lastError}` : "");
-    el.classList.toggle("cloudErr", !!sync.lastError);
-  }
-
-  function refreshSyncPanel() {
-    const box = document.getElementById("cloudPanelState");
-    if (!box) return;
-    const { pendingD1, pendingGist } = targetPending();
-    const provider = cloudToken && d1Url ? "gist + D1"
-      : cloudToken ? "gist" : d1Url ? "D1" : "this browser only";
-    const rows = [
-      `Storage: <b>${provider}</b>`,
-      `Status: <b>${syncLabel().replace("☁ ", "")}</b>`,
-      pendingD1 || pendingGist ? "Unsaved: <b>yes</b> — will retry automatically" : "Unsaved: <b>no</b>",
-      sync.lastError ? `Last error: <b style="color:#f08a8a">${sync.lastError}</b>` : "",
-      `Gist: one commit per ≤5 min · D1: one write per ≤30 s`,
-    ].filter(Boolean);
-    box.innerHTML = rows.map((r) => `<div style="margin:3px 0">${r}</div>`).join("");
-    paintSyncButton();
-  }
-
-  function configureSync() {
-    const token = prompt("GitHub token with gist scope (blank = local only for gist)",
-      cloudToken ? "••••••••" : "");
-    if (token === null) return;
-    if (!token.startsWith("••••")) {
-      cloudToken = token.trim();
-      localStorage.setItem("ig_cloud_token", cloudToken);
-    }
-    const d1 = prompt("D1 Worker endpoint URL (optional)", d1Url);
-    if (d1 === null) return;
-    d1Url = d1.trim();
-    localStorage.setItem("ig_cloud_d1", d1Url);
-    const key = prompt("D1 archive key (optional, stored in this browser)",
-      d1Key ? "••••••••" : "");
-    if (key !== null && !key.startsWith("••••")) {
-      d1Key = key.trim();
-      localStorage.setItem("ig_cloud_d1_key", d1Key);
-    }
-    sync.nextD1 = 0;
-    sync.nextGist = 0;
-    sync.backoff = SYNC.retryMin;
-    loadCloud().then(() => {
-      posts.forEach(applyOverride);
-      refreshSyncPanel();
-      pushCloud(false);
-    });
-  }
-
-  function openSyncPanel() {
-    const existing = document.getElementById("cloudPanel");
-    if (existing) { existing.remove(); return; }
-    const panel = document.createElement("div");
-    panel.id = "cloudPanel";
-    Object.assign(panel.style, {
-      position: "fixed", right: "18px", bottom: "140px", zIndex: "81",
-      width: "300px", padding: "13px", borderRadius: "12px",
-      border: "1px solid #2b364b", background: "#121722", color: "#e9edf6",
-      boxShadow: "0 12px 40px rgba(0,0,0,.45)", fontSize: "12px", lineHeight: "1.45",
-    });
-    panel.innerHTML = `
-      <div style="font-weight:600;margin-bottom:7px">Cloud sync</div>
-      <div id="cloudPanelState"></div>
-      <div style="display:flex;gap:6px;margin-top:10px">
-        <button id="cloudNow" style="flex:1;padding:6px 8px;border-radius:8px;border:1px solid #2b364b;background:#1b2333;color:#e9edf6;cursor:pointer">Sync now</button>
-        <button id="cloudPull" style="flex:1;padding:6px 8px;border-radius:8px;border:1px solid #2b364b;background:#1b2333;color:#e9edf6;cursor:pointer">Pull</button>
-        <button id="cloudConfig" style="flex:1;padding:6px 8px;border-radius:8px;border:1px solid #2b364b;background:#1b2333;color:#e9edf6;cursor:pointer">Configure…</button>
-        <button id="cloudClose" style="padding:6px 8px;border-radius:8px;border:1px solid #2b364b;background:#1b2333;color:#e9edf6;cursor:pointer">✕</button>
-      </div>
-      <div style="margin-top:9px;color:#9aa7bd">Edits save in this browser instantly. D1 on workers.dev is the online copy (at most one write every 30s) and reloads from it automatically; the gist is a 5-minute backup. No key is needed for the public archive document — the Worker accepts writes only from this site's origin.</div>`;
-    document.body.appendChild(panel);
-    refreshSyncPanel();
-    document.getElementById("cloudNow").onclick = async () => {
-      await pushCloud(true);
-      refreshSyncPanel();
-    };
-    document.getElementById("cloudPull").onclick = async () => {
-      await nativeFetch("/api/cloud", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ op: "pull" }),
-      }).catch(() => {});
-      location.reload();
-    };
-    document.getElementById("cloudConfig").onclick = configureSync;
-    document.getElementById("cloudClose").onclick = () => panel.remove();
-  }
-
   function urgentFlush() {
     const { pendingD1, pendingGist } = targetPending();
     if (!pendingD1 && !pendingGist) return;
@@ -959,6 +965,14 @@
   }
   window.addEventListener("load", maskLocalDashboard);
 
+  // Refresh signed media URLs before they expire.  Images already on screen
+  // stay cached; new videos / lazy thumbnails use the fresh token.
+  if (MEDIA_PROXY && MEDIA_TOKEN_URL) {
+    setInterval(() => {
+      loadMediaTokens(true).then(() => posts.forEach(rewritePostMedia)).catch(() => {});
+    }, 4 * 3600 * 1000);
+  }
+
   window.fetch = async (input, options = {}) => {
     const requestUrl = typeof input === "string" ? input : input.url;
     const url = new URL(requestUrl, document.baseURI);
@@ -969,74 +983,15 @@
       posts = db.posts;
       window.__STATIC_POSTS = posts;
       posts.forEach(applyOverride);
-      if (!document.getElementById("exportEdits")) {
-        const btn = document.createElement("button");
-        btn.id = "exportEdits";
-        btn.textContent = "Export edits";
-        btn.title = "Download a small JSON file with your category/note/tag edits";
-        Object.assign(btn.style, {
-          position: "fixed", right: "18px", bottom: "18px", zIndex: "80",
-          padding: "9px 13px", borderRadius: "10px", border: "1px solid #2b364b",
-          background: "#121722", color: "#e9edf6", cursor: "pointer", fontSize: "12px",
-        });
-        btn.onclick = () => {
-          const blob = new Blob([JSON.stringify(overrides, null, 2)], { type: "application/json" });
-          const a = document.createElement("a");
-          a.href = URL.createObjectURL(blob);
-          a.download = "instagram-archive-edits.json";
-          a.click();
-          URL.revokeObjectURL(a.href);
-        };
-        document.body.appendChild(btn);
-        const importBtn = document.createElement("button");
-        importBtn.id = "importEdits";
-        importBtn.textContent = "Import edits";
-        importBtn.title = "Load a previously exported edits JSON file";
-        Object.assign(importBtn.style, {
-          position: "fixed", right: "18px", bottom: "58px", zIndex: "80",
-          padding: "9px 13px", borderRadius: "10px", border: "1px solid #2b364b",
-          background: "#121722", color: "#e9edf6", cursor: "pointer", fontSize: "12px",
-        });
-        importBtn.onclick = () => {
-          const input = document.createElement("input");
-          input.type = "file";
-          input.accept = "application/json,.json";
-          input.onchange = async () => {
-            const file = input.files && input.files[0];
-            if (!file) return;
-            try {
-              const incoming = JSON.parse(await file.text());
-              if (!incoming || typeof incoming !== "object") return;
-              overrides = { ...overrides, ...incoming };
-              localStorage.setItem(STORE, JSON.stringify(overrides));
-              posts.forEach(applyOverride);
-              location.reload();
-            } catch (err) {
-              alert("Could not import edits: " + err.message);
-            }
-          };
-          input.click();
-        };
-        document.body.appendChild(importBtn);
-        const cloudBtn = document.createElement("button");
-        cloudBtn.id = "cloudSync";
-        cloudBtn.title = "Cloud sync status and settings";
-        Object.assign(cloudBtn.style, {
-          position: "fixed", right: "18px", bottom: "98px", zIndex: "80",
-          padding: "9px 13px", borderRadius: "10px", border: "1px solid #2b364b",
-          background: "#121722", color: "#e9edf6", cursor: "pointer", fontSize: "12px",
-        });
-        cloudBtn.onclick = () => openSyncPanel();
-        document.body.appendChild(cloudBtn);
-        paintSyncButton();
-        window.addEventListener("pagehide", urgentFlush);
-        document.addEventListener("visibilitychange", () => {
-          if (document.visibilityState === "hidden") urgentFlush();
-        });
-        setInterval(() => {
-          if (sync.rev > Math.max(sync.d1Rev, sync.gistRev)) pushCloud(false);
-        }, 60000);
-      }
+      // Autosave flush/listeners stay unconditional; the old export/import/
+      // cloud-sync buttons and their panel are injected by the UI layer now.
+      window.addEventListener("pagehide", urgentFlush);
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") urgentFlush();
+      });
+      setInterval(() => {
+        if (sync.rev > Math.max(sync.d1Rev, sync.gistRev)) pushCloud(false);
+      }, 60000);
     }
     const api = url.pathname.slice(marker + 5);
     const method = (options.method || "GET").toUpperCase();

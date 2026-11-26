@@ -27,9 +27,26 @@
     return;
   }
 
+  // Manual backup/export buttons are gone: the mirror runs by itself.  The
+  // hosted shell (publish/static-api.js, owned elsewhere) may still inject the
+  // legacy controls; remove them from the gallery DOM so there is exactly one
+  // UI everywhere.  Listeners die with their nodes.
+  function stripLegacyBackupUI() {
+    ["exportEdits", "importEdits", "cloudSync"].forEach((id) => {
+      const node = document.getElementById(id);
+      if (node) node.remove();
+    });
+    const panel = document.getElementById("cloudPanel");
+    if (panel) panel.remove();
+  }
+  if (typeof MutationObserver === "function") {
+    new MutationObserver(stripLegacyBackupUI).observe(
+      document.documentElement, { childList: true, subtree: true });
+  }
+  window.addEventListener("load", stripLegacyBackupUI);
+
   const state = {
-    source: params.get("source") || (isRednotePath ? "rednote-main" : "instagram-main"),
-    q: "", category: "", suggested: "", tagStates: new Map(), owner: "", sort: "manual", view: "grid",
+    source: params.get("source") || (isRednotePath ? "rednote-main" : "instagram-main"),    q: "", category: "", suggested: "", tagStates: new Map(), owner: "", sort: "manual", view: "grid",
     filters: new Set(), onlyCats: new Set(),
     offset: 0, limit: 60, total: 0, items: [], loading: false, done: false,
     selected: new Set(),
@@ -41,12 +58,197 @@
   const activeTags = (mode) =>
     [...state.tagStates].filter(([, m]) => m === mode).map(([name]) => name);
   let dragIds = null;
-  let saveTimer = null;
   let searchTimer = null;
   let rectStart = null;
   let rectMoved = false;
   let suppressClick = false;
   let liveTimer = null;
+
+  /* ---------------- autosave (Google-Docs style) ----------------
+   * Edits are coalesced per post for a short idle window, then sent as one
+   * batch of tiny ops.  At most one request is in flight; failures back off
+   * exponentially with jitter; a hidden tab flushes immediately.
+   * The server applies the batch in a single SQLite transaction and hands the
+   * same ops to the background mirror, so the network sees one request per
+   * typing burst instead of one per keystroke.
+   */
+  const AUTOSAVE = { idle: 1200, minBackoff: 1000, maxBackoff: 60000 };
+  const editQueue = new Map();      // post id -> {patch, t}
+  let editTimer = null;
+  let editRetryTimer = null;
+  let editInflight = false;
+  let editBackoff = AUTOSAVE.minBackoff;
+  let editRev = 0;
+  let editLastOk = 0;
+  let editLastError = "";
+  let cloudState = null;
+
+  function relTime(value) {
+    if (!value) return "";
+    const then = typeof value === "number" ? value : Date.parse(value);
+    if (!then || isNaN(then)) return "";
+    const secs = Math.max(0, Math.round((Date.now() - then) / 1000));
+    if (secs < 5) return "just now";
+    if (secs < 60) return secs + "s ago";
+    const mins = Math.round(secs / 60);
+    if (mins < 60) return mins + "m ago";
+    const hours = Math.round(mins / 60);
+    if (hours < 24) return hours + "h ago";
+    const days = Math.round(hours / 24);
+    if (days < 7) return days + "d ago";
+    return new Date(then).toLocaleDateString(undefined,
+      { month: "short", day: "numeric" });
+  }
+
+  function renderSyncState() {
+    const el = $("syncState");
+    if (!el) return;
+    if (editInflight) {
+      el.innerHTML = "saving edits…";
+      el.classList.remove("err");
+      return;
+    }
+    if (editQueue.size) {
+      el.innerHTML = `${editQueue.size} unsaved edit${editQueue.size === 1 ? "" : "s"}`;
+      el.classList.remove("err");
+      return;
+    }
+    const last = editLastOk || (cloudState && cloudState.last_updated
+      ? Date.parse(cloudState.last_updated) : 0);
+    const provider = cloudState && cloudState.provider;
+    const parts = [];
+    if (provider && provider !== "none") {
+      parts.push(provider === "file" ? "local backup" : provider);
+    }
+    if (editLastError) parts.push("retrying");
+    parts.push(last ? relTime(last) : "not saved yet");
+    el.textContent = (parts.join(" · "));
+    el.classList.toggle("err", !!editLastError);
+    el.title = cloudState
+      ? `Edits save automatically. Last change ${relTime(last) || "—"}`
+        + (editLastError ? ` · ${editLastError}` : "")
+      : "Edits save automatically";
+  }
+
+  function scheduleFlush(delay) {
+    clearTimeout(editTimer);
+    editTimer = setTimeout(() => { editTimer = null; flushEdits(); },
+      delay == null ? AUTOSAVE.idle : delay);
+  }
+
+  function queueEdit(id, patch) {
+    if (!id || !patch) return;
+    const current = editQueue.get(id) || { patch: {}, t: 0 };
+    current.patch = { ...current.patch, ...patch };
+    current.t = Date.now();
+    editQueue.set(id, current);
+    scheduleFlush(AUTOSAVE.idle);
+    renderSyncState();
+  }
+
+  function queueEdits(ops) {
+    ops.forEach((op) => {
+      const id = Number(op.id);
+      if (!id) return;
+      const current = editQueue.get(id) || { patch: {}, t: 0 };
+      current.patch = { ...current.patch, ...(op.patch || {}) };
+      current.t = Math.max(current.t, Number(op.t) || Date.now());
+      editQueue.set(id, current);
+    });
+    scheduleFlush(AUTOSAVE.idle);
+    renderSyncState();
+  }
+
+  async function flushEdits(force = false, keepalive = false) {
+    if (editInflight || !editQueue.size) return;
+    if (!force && editRetryTimer) return;
+    editInflight = true;
+    clearTimeout(editTimer);
+    editTimer = null;
+    const ops = [...editQueue].map(([id, value]) => ({
+      id: Number(id), patch: value.patch, t: value.t,
+    }));
+    editQueue.clear();
+    renderSyncState();
+    const headers = { "Content-Type": "application/json" };
+    if (editRev) headers["If-Match"] = `"${editRev}"`;
+    try {
+      let data;
+      if (staticMode) {
+        // The hosted build has no local /api/edits endpoint; static-api.js
+        // implements the per-post POST and batches its own cloud push.
+        // Keep the same debounce/coalesce/backoff/single-flight behaviour.
+        let applied = 0;
+        for (const op of ops) {
+          const res = await fetch(apiUrl(`/api/post/${op.id}`), {
+            method: "POST", headers,
+            body: JSON.stringify(op.patch),
+          });
+          if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+          applied += 1;
+        }
+        editRev += 1;
+        data = { applied, rev: editRev, pending: 0 };
+      } else {
+        const res = await fetch(apiUrl("/api/edits"), {
+          method: "POST", headers, keepalive: !!keepalive,
+          body: JSON.stringify({ ops, base_rev: editRev, flush: !!force }),
+        });
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        data = await res.json();
+        if (data.rev != null) editRev = data.rev;
+      }
+      editBackoff = AUTOSAVE.minBackoff;
+      editLastOk = Date.now();
+      editLastError = "";
+      console.info(`[autosave] ${ops.length} op${ops.length === 1 ? "" : "s"}`
+        + ` · applied ${data.applied} · rev ${editRev}`);
+    } catch (err) {
+      editLastError = err.message || String(err);
+      // Put the ops back; newer edits in the meantime win per key.
+      ops.forEach((op) => {
+        const current = editQueue.get(op.id) || { patch: {}, t: 0 };
+        editQueue.set(op.id, {
+          patch: { ...op.patch, ...current.patch },
+          t: Math.max(op.t || 0, current.t || 0),
+        });
+      });
+      const jitter = Math.floor(editBackoff * 0.3 * Math.random());
+      clearTimeout(editRetryTimer);
+      editRetryTimer = setTimeout(() => {
+        editRetryTimer = null;
+        flushEdits();
+      }, editBackoff + jitter);
+      editBackoff = Math.min(AUTOSAVE.maxBackoff, editBackoff * 2);
+      console.warn("[autosave] retry in", editBackoff, "ms", editLastError);
+    } finally {
+      editInflight = false;
+      renderSyncState();
+      if (editQueue.size && !editRetryTimer) scheduleFlush(AUTOSAVE.idle);
+    }
+  }
+
+  function flushOnHide() {
+    if (!editQueue.size) return;
+    if (editInflight) return;
+    // fetch keepalive survives the page; sendBeacon is the fallback.
+    flushEdits(true, true).catch(() => {});
+    if (!staticMode && editQueue.size && navigator.sendBeacon) {
+      const payload = new Blob([JSON.stringify({
+        ops: [...editQueue].map(([id, value]) => ({
+          id: Number(id), patch: value.patch, t: value.t,
+        })),
+        base_rev: editRev, flush: true,
+      })], { type: "application/json" });
+      navigator.sendBeacon(apiUrl("/api/edits"), payload);
+      editQueue.clear();
+    }
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushOnHide();
+  });
+  window.addEventListener("pagehide", flushOnHide);
+  setInterval(renderSyncState, 15000);
 
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -754,12 +956,25 @@
     if (!cats.length) {
       chip.classList.remove("on");
       chip.textContent = "";
+    } else {
+      const pct = item.confidence ? ` ${Math.round(item.confidence * 100)}%` : "";
+      chip.textContent = cats.slice(0, 2).join(" · ")
+        + (cats.length > 2 ? ` +${cats.length - 2}` : "") + pct;
+      chip.classList.add("on");
+    }
+    const sug = node.querySelector(".sugChip");
+    if (!sug) return;
+    const suggested = String(item.suggested_category || "").trim();
+    if (!suggested || cats.includes(suggested)) {
+      sug.hidden = true;
+      sug.textContent = "";
       return;
     }
-    const pct = item.confidence ? ` ${Math.round(item.confidence * 100)}%` : "";
-    chip.textContent = cats.slice(0, 2).join(" · ")
-      + (cats.length > 2 ? ` +${cats.length - 2}` : "") + pct;
-    chip.classList.add("on");
+    const conf = item.suggested_confidence
+      ? ` ${Math.round(item.suggested_confidence * 100)}%` : "";
+    sug.hidden = false;
+    sug.textContent = "suggested: " + suggested + conf;
+    sug.title = "Classifier suggestion — not filed. Drop a category or use the drawer to file it.";
   }
 
   function cardEl(item) {
@@ -1063,6 +1278,7 @@
         <span>💬 ${fmtNum(post.comments_count || 0)} comments</span>
         ${post.typename ? `<span>${esc(post.typename)}</span>` : ""}
         ${post.category ? `<span>${esc(post.category)}${pct}</span>` : ""}
+        ${post.suggested_category ? `<span class="sugMeta">suggested: ${esc(post.suggested_category)}</span>` : ""}
         ${post.location ? `<span>📍 ${esc(post.location)}</span>` : ""}
         <span>${(post.media || []).length} file${(post.media || []).length === 1 ? "" : "s"}</span>
       </div>
@@ -1073,6 +1289,13 @@
         ${postCats.map((c) => `<span>${esc(c)} <button class="catRemove" data-cat="${esc(c)}" title="Remove">×</button></span>`).join("") || '<span class="hint">none</span>'}
       </div>
       <div class="dField" style="margin-top:8px"><select id="catSelect">${catOptions}</select></div>
+
+      <div class="dSection">Suggested <span class="sugNote">classifier · not filed</span></div>
+      <div class="dTags sugTags" id="postSuggested">
+        ${post.suggested_category
+          ? `<span class="sugChip on">${esc(post.suggested_category)}${post.suggested_confidence ? " " + Math.round(post.suggested_confidence * 100) + "%" : ""}</span>`
+          : '<span class="hint">none</span>'}
+      </div>
 
       <div class="dSection">Notes <span id="savedNotes" class="saved">saved</span></div>
       <div class="dField"><textarea id="notes" placeholder="Why did you save this? What to use it for…">${esc(post.notes || "")}</textarea></div>
@@ -1218,7 +1441,7 @@
           const cat = btn.dataset.cat;
           const next = postCats.filter((c) => c !== cat);
           postCats.splice(0, postCats.length, ...next);
-          await savePost(post.id, { categories: postCats });
+          queueEdit(post.id, { categories: [...postCats] });
           flash("savedCat");
           updateLocal(post.id, { categories: [...postCats], category: postCats[0] || null });
           paintPostCats();
@@ -1233,10 +1456,20 @@
       if (value === "__new") {
         const next = prompt("New category name");
         value = next ? next.trim() : "";
+        if (value) {
+          // Registry write is immediate metadata (shared by every platform),
+          // the per-post filing still goes through the autosave batch.
+          await api("/api/categories", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ op: "add", name: value }),
+          });
+          await loadFacets();
+          if (!catNames.includes(value)) catNames.push(value);
+        }
       }
       if (!value) { e.target.value = ""; return; }
       if (!postCats.includes(value)) postCats.push(value);
-      await savePost(post.id, { categories: postCats });
+      queueEdit(post.id, { categories: [...postCats] });
       flash("savedCat");
       updateLocal(post.id, { categories: [...postCats], category: postCats[0] || null });
       paintPostCats();
@@ -1246,18 +1479,14 @@
     };
 
     $("notes").oninput = () => {
-      clearTimeout(saveTimer);
-      saveTimer = setTimeout(async () => {
-        await savePost(post.id, { notes: $("notes").value });
-        flash("savedNotes");
-        updateLocal(post.id, { notes: $("notes").value });
-        loadCloudStatus();
-      }, 700);
+      queueEdit(post.id, { notes: $("notes").value });
+      flash("savedNotes");
+      updateLocal(post.id, { notes: $("notes").value });
     };
 
     const saveTags = async () => {
       const tags = $("tagInput").value.split(",").map((t) => t.trim()).filter(Boolean);
-      await savePost(post.id, { tags });
+      queueEdit(post.id, { tags });
       flash("savedTags");
       $("dTags").innerHTML = tagHtml(tags);
       updateLocal(post.id, { tags });
@@ -1328,11 +1557,9 @@
   }
 
   async function savePost(id, payload) {
-    await api(`/api/post/${id}`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    loadCloudStatus();
+    // Kept for callers outside the drawer; all per-post fields go through the
+    // same coalescing queue so nothing bypasses the autosave batching.
+    queueEdit(id, payload);
   }
 
   function flash(id) {
@@ -1781,31 +2008,18 @@
   }
   if ($("liveRefresh")) $("liveRefresh").onclick = renderLive;
 
-  /* ---------------- cloud sync badge ---------------- */
+  /* ---------------- autosave status ---------------- */
   async function loadCloudStatus() {
-    const el = $("syncState");
-    if (!el || staticMode) return;
+    if (staticMode) return;
     try {
       const d = await api("/api/cloud");
-      if (!d.enabled || d.provider === "none") { el.textContent = ""; return; }
-      el.classList.toggle("err", !!d.last_error);
-      el.innerHTML = `edits sync: <b>${esc(d.provider)}</b>${d.online ? " online" : " (local mirror)"}
-        ${d.last_push ? " · " + esc(d.last_push) : ""}${d.last_error ? " · " + esc(d.last_error) : ""}`;
-      el.title = d.online
-        ? "Click to push now · shift-click to pull the online copy"
-        : "Local mirror. Configure data/cloud.json with gist, github or d1 for online storage.";
-      el.onclick = async (e) => {
-        try {
-          const result = await api("/api/cloud", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ op: e.shiftKey ? "pull" : "push" }),
-          });
-          if (e.shiftKey && result.applied) { await loadFacets(); reset(); }
-          await loadCloudStatus();
-        } catch (err) { alert("Sync failed: " + err.message); }
-      };
-    } catch (_) { el.textContent = ""; }
+      cloudState = d && d.enabled ? d : null;
+    } catch (_) {
+      cloudState = null;
+    }
+    renderSyncState();
   }
+  setInterval(loadCloudStatus, 20000);
 
   /* ---------------- UI wiring ---------------- */
   $("search").addEventListener("input", (e) => {

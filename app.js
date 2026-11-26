@@ -143,4 +143,71 @@
     frame.src = "about:blank";
     setTimeout(() => { frame.src = src; }, 60);
   };
+
+  /* ---------------- last updated ---------------- */
+  // A quiet "last updated" replaces the old export/import/cloud-sync buttons:
+  // backups are automatic, the timestamp is the only thing worth showing.
+  const relTime = (value) => {
+    if (!value) return "";
+    const then = typeof value === "number" ? value
+      : Date.parse(value);
+    if (!then || isNaN(then)) return "";
+    const secs = Math.max(0, Math.round((Date.now() - then) / 1000));
+    if (secs < 5) return "just now";
+    if (secs < 60) return secs + "s ago";
+    const mins = Math.round(secs / 60);
+    if (mins < 60) return mins + "m ago";
+    const hours = Math.round(mins / 60);
+    if (hours < 24) return hours + "h ago";
+    return new Date(then).toLocaleDateString(undefined,
+      { month: "short", day: "numeric" });
+  };
+
+  const stateApi = (() => {
+    if (cfg.stateApi) return new URL(cfg.stateApi, siteBase).href;
+    if (!cfg.accountsApi) return "";
+    try {
+      const api = new URL(cfg.accountsApi, siteBase);
+      if (api.pathname.endsWith("/api/accounts")) {
+        return api.origin + "/api/cloud";
+      }
+    } catch (_) {}
+    // The static site build has no local API; its personal state lives in the
+    // public Worker document, whose updated_at is the online timestamp.
+    if (location.protocol === "https:") {
+      return "https://ig-archive-state.hheylau.workers.dev/?id=default";
+    }
+    return "";
+  })();
+
+  let lastStateAt = 0;
+  const paintUpdated = () => {
+    const el = $("hubUpdated");
+    if (!el) return;
+    el.textContent = lastStateAt ? "updated " + relTime(lastStateAt) : "";
+    el.title = lastStateAt
+      ? "Personal state last changed " + new Date(lastStateAt).toLocaleString()
+      : "Personal state updates automatically";
+  };
+
+  async function loadLastUpdated() {
+    if (!stateApi) { paintUpdated(); return; }
+    try {
+      const res = await fetch(stateApi, { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      const stamp = data.last_updated
+        || (data.doc && (data.doc.updated_at || data.updated_at))
+        || data.updated_at || "";
+      const parsed = typeof stamp === "number" ? stamp : Date.parse(stamp);
+      if (parsed) lastStateAt = Math.max(lastStateAt, parsed);
+      paintUpdated();
+    } catch (_) {}
+  }
+  loadLastUpdated();
+  setInterval(loadLastUpdated, 20000);
+  setInterval(paintUpdated, 5000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") loadLastUpdated();
+  });
 })();
